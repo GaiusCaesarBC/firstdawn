@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const emptySubscribe = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
 function ControlButton({
   disabled,
@@ -43,8 +47,7 @@ export function WorldControlsClient({
   productionPhrase: string;
 }) {
   const canRunSimulation = isActive && !isProduction;
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(emptySubscribe, clientSnapshot, serverSnapshot);
 
   if (!mounted) return null;
 

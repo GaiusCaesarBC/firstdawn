@@ -74,7 +74,6 @@ export function createHrTimer(): HrTimer {
       "==============================================\n",
     ];
 
-    // eslint-disable-next-line no-console
     console.log(lines.join("\n"));
   }
 

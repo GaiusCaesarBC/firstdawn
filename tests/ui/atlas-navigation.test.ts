@@ -189,18 +189,37 @@ describe("atlas navigation and polish", () => {
   });
 
   it("Search centers correct cell and opens inspector", async () => {
-    renderAtlas();
+    const initialSnapshot = buildAtlasSnapshot(baseWorld, 1);
+    renderAtlas(initialSnapshot);
 
     fireEvent.click(screen.getByTestId("toolbar-search"));
     const input = await screen.findByTestId("atlas-search-input");
-    // Type a plausible cell id from the grid top-left region
-    (input as HTMLInputElement).value = "cell-00-00";
-    fireEvent.change(input);
+    fireEvent.change(input, { target: { value: "cell-00-00" } });
+    currentContext.operations.length = 0;
     fireEvent.click(screen.getByTestId("atlas-search-go"));
 
-    // After focusing a cell, clicking Reset View and ensuring canvas drew from buffer
+    const target = initialSnapshot.cells.find((cell) => cell.id === "cell-00-00");
+    expect(target).toBeTruthy();
+
+    const worldRect = createAtlasCoordinateTransform(initialSnapshot, { scale: 1, offsetX: 0, offsetY: 0 }).cellRect(target!);
+    const focusedView = {
+      scale: 1.4,
+      offsetX: 1120 / 2 - (worldRect.x + worldRect.width / 2) * 1.4,
+      offsetY: 680 / 2 - (worldRect.y + worldRect.height / 2) * 1.4,
+    };
+    const rect = createAtlasCoordinateTransform(initialSnapshot, focusedView).cellRect(target!);
+
     await waitFor(() => {
-      expect((currentContext.operations as string[]).some((op) => op.startsWith("drawImage:"))).toBe(true);
+      expect(screen.getAllByText("cell-00-00").length).toBeGreaterThan(0);
+    });
+
+    await waitFor(() => {
+      const selectedRect = getSelectedStrokeRect(currentContext.operations);
+      expect(selectedRect).toBeTruthy();
+      expect(selectedRect!.x).toBeCloseTo(rect.x + 1, 3);
+      expect(selectedRect!.y).toBeCloseTo(rect.y + 1, 3);
+      expect(selectedRect!.width).toBeCloseTo(rect.width - 2, 3);
+      expect(selectedRect!.height).toBeCloseTo(rect.height - 2, 3);
     });
   });
 
