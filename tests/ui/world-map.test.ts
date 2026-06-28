@@ -3,9 +3,10 @@
 import { WorldEnvironment, WorldStatus } from "@prisma/client";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { WorldMapAtlasClient } from "../../src/app/worlds/map/world-map-atlas-client";
+import { createAtlasCoordinateTransform, FutureLayersPanel, WorldMapAtlasClient } from "../../src/app/worlds/map/world-map-atlas-client";
 import { buildAtlasSnapshot, toAtlasWorldOption } from "../../src/lib/worlds/map-atlas";
 import type { WorldWithPlanet } from "../../src/lib/worlds/world-lifecycle";
 
@@ -87,13 +88,38 @@ function createRecordingContext(): RecordingContext {
   return context as unknown as RecordingContext;
 }
 
-function renderAtlas() {
+function renderAtlas(options: Partial<ComponentProps<typeof WorldMapAtlasClient>> = {}) {
   const initialSnapshot = buildAtlasSnapshot(baseWorld, 1);
-
-  return render(createElement(WorldMapAtlasClient, {
+  const result = render(createElement(WorldMapAtlasClient, {
     worlds: [toAtlasWorldOption(baseWorld)],
     initialSnapshot,
+    ...options,
   }));
+
+  return { ...result, initialSnapshot };
+}
+
+function getTestFitView(snapshot: ReturnType<typeof buildAtlasSnapshot>) {
+  const worldWidth = snapshot.grid.longitudeDivisions * 28;
+  const worldHeight = snapshot.grid.latitudeDivisions * 28;
+  const scale = Math.min((1120 - 48) / worldWidth, (680 - 48) / worldHeight);
+
+  return {
+    scale,
+    offsetX: (1120 - worldWidth * scale) / 2,
+    offsetY: (680 - worldHeight * scale) / 2,
+  };
+}
+
+function clickCell(snapshot: ReturnType<typeof buildAtlasSnapshot>, cellId: string) {
+  const cell = snapshot.cells.find((candidate) => candidate.id === cellId);
+  expect(cell).toBeTruthy();
+
+  const rect = createAtlasCoordinateTransform(snapshot, getTestFitView(snapshot)).cellRect(cell!);
+  fireEvent.click(screen.getByTestId("world-map-canvas"), {
+    clientX: rect.x + rect.width / 2,
+    clientY: rect.y + rect.height / 2,
+  });
 }
 
 describe("world map atlas ui", () => {
@@ -208,6 +234,114 @@ describe("world map atlas ui", () => {
     });
   });
 
+  it("keeps timeline slider changes local until pointer release or keyboard commit", async () => {
+    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => buildAtlasSnapshot(baseWorld, day));
+    renderAtlas({ fetchSnapshot });
+
+    const slider = screen.getByTestId("time-slider") as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: "42" } });
+
+    expect(slider.value).toBe("42");
+    expect(screen.getByText("Selected Day 42")).toBeTruthy();
+    expect(fetchSnapshot).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(slider);
+
+    await waitFor(() => {
+      expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+      expect(fetchSnapshot).toHaveBeenLastCalledWith(baseWorld.id, 42);
+    });
+
+    fireEvent.change(slider, { target: { value: "120" } });
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Selected Day 120")).toBeTruthy();
+
+    fireEvent.keyUp(slider, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      expect(fetchSnapshot).toHaveBeenCalledTimes(2);
+      expect(fetchSnapshot).toHaveBeenLastCalledWith(baseWorld.id, 120);
+    });
+  });
+  it("renders live future layer cards and updates them for different selected cells", async () => {
+    window.history.replaceState(null, "", "/worlds/map");
+    window.sessionStorage.clear();
+    const { initialSnapshot } = renderAtlas();
+
+    const panel = screen.getByTestId("future-layers-panel");
+    expect(panel.textContent).toContain("Planet Summary");
+    expect(panel.textContent).toContain("Biome");
+    expect(panel.textContent).toContain("Vegetation");
+    expect(panel.textContent).toContain("Average suitability");
+    expect(panel.textContent).toContain("Average seasonal stress");
+    expect(panel.textContent).toContain("Animal Ecology Not Generated Yet");
+    expect(panel.textContent).toContain("Civilization Systems Not Generated Yet");
+    expect(panel.textContent).not.toContain("Reserved atlas slot");
+
+    fireEvent.click(screen.getByTestId("layer-biomes"));
+    await waitFor(() => {
+      expect(screen.getByText("Dominant biome")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("layer-vegetation"));
+    await waitFor(() => {
+      expect(screen.getByText("Dominant plant")).toBeTruthy();
+    });
+
+    const firstCell = initialSnapshot.cells.find((cell) => cell.dominantPlantKey !== "none") ?? initialSnapshot.cells[0];
+    const secondCell = initialSnapshot.cells.find((cell) =>
+      cell.id !== firstCell.id
+      && (cell.biomeName !== firstCell.biomeName || cell.dominantPlantName !== firstCell.dominantPlantName)
+    ) ?? initialSnapshot.cells.find((cell) => cell.id !== firstCell.id) ?? initialSnapshot.cells[0];
+
+    clickCell(initialSnapshot, firstCell.id);
+    await waitFor(() => {
+      expect(panel.textContent).toContain("Selected Cell");
+      expect(panel.textContent).toContain(firstCell.id);
+      expect(panel.textContent).toContain(firstCell.biomeName);
+      expect(panel.textContent).toContain(firstCell.dominantPlantName);
+      expect(panel.textContent).toContain("Suitability");
+      expect(panel.textContent).toContain("Seasonal stress");
+    });
+
+    clickCell(initialSnapshot, secondCell.id);
+    await waitFor(() => {
+      expect(panel.textContent).toContain(secondCell.id);
+      expect(panel.textContent).toContain(secondCell.biomeName);
+      expect(panel.textContent).toContain(secondCell.dominantPlantName);
+    });
+  });
+
+  it("shows future layer loading, empty, and error states", () => {
+    const initialSnapshot = buildAtlasSnapshot(baseWorld, 1);
+
+    const loadingRender = render(createElement(FutureLayersPanel, {
+      snapshot: initialSnapshot,
+      selectedCell: null,
+      loading: true,
+      error: null,
+    }));
+    expect(screen.getByTestId("future-layers-panel").textContent).toContain("Loading selected world ecology");
+    loadingRender.unmount();
+
+    const emptyRender = render(createElement(FutureLayersPanel, {
+      snapshot: { ...initialSnapshot, cells: [] },
+      selectedCell: null,
+      loading: false,
+      error: null,
+    }));
+    expect(screen.getByTestId("future-layers-panel").textContent).toContain("No atlas cells are available");
+    emptyRender.unmount();
+
+    render(createElement(FutureLayersPanel, {
+      snapshot: initialSnapshot,
+      selectedCell: null,
+      loading: false,
+      error: "snapshot failed",
+    }));
+    expect(screen.getByTestId("future-layers-panel").textContent).toContain("snapshot failed");
+  });
   it("builds deterministic seasonal atlas snapshots for different days", () => {
     const firstDay = buildAtlasSnapshot(baseWorld, 1);
     const midYear = buildAtlasSnapshot(baseWorld, 220);
