@@ -1,0 +1,55 @@
+{
+  "seed": "FIRST_DAWN_CANONICAL_WORLD_V1_2026_06_27",
+  "world": {
+    "name": "First Dawn Canonical World",
+    "slug": "first-dawn-canonical-world",
+    "description": "Official immutable First Dawn world generated identically in every environment."
+  },
+  "planet": {
+    "name": "First Dawn Canonical Planet",
+    "radiusKm": 6371,
+    "gravityMS2": 9.81,
+    "massKg": 5.972e24,
+    "rotationPeriodHours": 24,
+    "orbitalPeriodDays": 365,
+    "axialTiltDegrees": 23.44,
+    "orbitalEccentricity": 0.0167,
+    "atmospherePressureKPa": 101.3,
+    "atmosphereComposition": {
+      "argon": 0.93,
+      "carbonDioxide": 0.04,
+      "nitrogen": 78,
+      "oxygen": 21
+    },
+    "oceanCoveragePercent": 71
+  },
+  "defaultWorldAliases": [
+    {
+      "key": "sandbox",
+      "label": "Sandbox",
+      "name": "Sandbox World",
+      "slug": "local-sandbox",
+      "environment": "SANDBOX",
+      "status": "ACTIVE",
+      "protected": false
+    },
+    {
+      "key": "placeholder",
+      "label": "Placeholder",
+      "name": "Placeholder World",
+      "slug": "placeholder-world",
+      "environment": "STAGING",
+      "status": "PAUSED",
+      "protected": false
+    },
+    {
+      "key": "production",
+      "label": "Production",
+      "name": "Production World",
+      "slug": "first-dawn-production",
+      "environment": "PRODUCTION",
+      "status": "PAUSED",
+      "protected": true
+    }
+  ]
+}

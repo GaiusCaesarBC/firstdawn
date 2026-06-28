@@ -1,0 +1,343 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorldEnvironment {
+  PRODUCTION
+  STAGING
+  SANDBOX
+  EXPERIMENT
+}
+
+enum WorldStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum PersonState {
+  ALIVE
+  DEAD
+}
+
+enum RelationshipKind {
+  FAMILY
+  FRIENDSHIP
+  RIVALRY
+  PARTNERSHIP
+  COMMUNITY
+}
+
+model World {
+  id                String           @id @default(cuid())
+  name              String
+  slug              String           @unique
+  environment       WorldEnvironment @default(SANDBOX)
+  status            WorldStatus      @default(DRAFT)
+  currentTick         BigInt           @default(0)
+  timeScale           Float            @default(1)
+  tickDurationSeconds Float            @default(60)
+  dayLengthSeconds    Float            @default(86400)
+  yearLengthDays      Int              @default(365)
+  axialTiltDegrees    Float            @default(23.44)
+  orbitalEccentricity Float            @default(0.0167)
+  initialEpochName    String           @default("First Dawn")
+  initialYear         Int              @default(0)
+  initialDay          Int              @default(0)
+  initialHour         Float            @default(6)
+  currentGeneration   Int              @default(0)
+  seed              String?
+  description       String?
+  protected         Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  people        Person[]
+  memories      Memory[]
+  events        Event[]
+  relationships Relationship[]
+  locations     Location[]
+  animals       Animal[]
+  plants        Plant[]
+  actionLogs    WorldActionLog[]
+  planet        Planet?
+  simulationTicks SimulationTick[]
+
+  @@index([environment])
+  @@index([status])
+  @@index([environment, status])
+  @@index([protected])
+}
+
+model WorldActionLog {
+  id        String   @id @default(cuid())
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  action    String
+  actor     String   @default("local-developer")
+  reason    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([worldId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Planet {
+  id                    String   @id @default(cuid())
+  worldId               String   @unique
+  world                 World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  name                  String
+  radiusKm              Float
+  gravityMS2            Float
+  massKg                Float
+  rotationPeriodHours   Float
+  orbitalPeriodDays     Float
+  axialTiltDegrees      Float
+  orbitalEccentricity   Float
+  atmospherePressureKPa Float
+  atmosphereComposition Json
+  oceanCoveragePercent  Float
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  cells                 PlanetCell[]
+}
+
+model PlanetCell {
+  id                String   @id @default(cuid())
+  planetId          String
+  planet            Planet   @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  cellId            String
+  row               Int
+  column            Int
+  biomeKey          String
+  biomeName         String
+  biomeCategory     String
+  habitabilityScore Float
+  fertilityScore    Float
+  waterAvailability Float
+  vegetationDensity Float
+  biomeColor        String
+  biomeTags         Json
+  dominantPlantKey  String   @default("none")
+  dominantPlantName String   @default("No Established Plant Life")
+  plantSuitabilityScore Float @default(0)
+  plantDensity      Float    @default(0)
+  biomassScore      Float    @default(0)
+  ediblePlantScore  Float    @default(0)
+  woodMaterialScore Float    @default(0)
+  medicinalPotentialScore Float @default(0)
+  biodiversityScore Float    @default(0)
+  regrowthRate      Float    @default(0)
+  seasonalStressScore Float  @default(1)
+  plantTags         Json     @default("[]")
+  plantGeneratedAt  DateTime?
+  plantUpdatedAt    DateTime?
+  dominantAnimalGuildKey  String   @default("aquatic-microfauna")
+  dominantAnimalGuildName String   @default("Aquatic Microfauna")
+  animalSuitabilityScore Float    @default(0)
+  herbivoreCapacity Float    @default(0)
+  predatorCapacity  Float    @default(0)
+  preyAvailability  Float    @default(0)
+  animalDensity     Float    @default(0)
+  migrationPressure Float    @default(0)
+  dangerScore       Float    @default(0)
+  huntingValue      Float    @default(0)
+  domesticationPotential Float @default(0)
+  animalBiodiversityScore Float @default(0)
+  carryingCapacityScore Float @default(0)
+  animalTags        Json     @default("[]")
+  animalGeneratedAt DateTime?
+  animalUpdatedAt   DateTime?
+  generatedAt       DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([planetId, cellId])
+  @@index([planetId])
+  @@index([planetId, biomeKey])
+  @@index([planetId, biomeCategory])
+  @@index([planetId, dominantPlantKey])
+  @@index([planetId, dominantAnimalGuildKey])
+  @@index([row, column])
+}
+
+model SimulationTick {
+  id          String   @id @default(cuid())
+  worldId     String
+  world       World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  tick        BigInt
+  durationMs  Int
+  success     Boolean
+  systemCount Int
+  failedSystemCount Int @default(0)
+  startedAt   DateTime
+  completedAt DateTime
+  metadata    Json?
+
+  @@index([worldId])
+  @@index([worldId, success])
+  @@index([worldId, tick])
+  @@index([startedAt])
+  @@unique([worldId, tick])
+}
+
+model Person {
+  id             String      @id @default(cuid())
+  worldId        String
+  world          World       @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  name           String?
+  state          PersonState @default(ALIVE)
+  generation     Int         @default(0)
+  bornAtTick     BigInt?
+  diedAtTick     BigInt?
+  locationId     String?
+  location       Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  traits         Json?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  memories          Memory[]
+  events            Event[]
+  relationshipsFrom Relationship[] @relation("RelationshipFrom")
+  relationshipsTo   Relationship[] @relation("RelationshipTo")
+
+  @@index([worldId])
+  @@index([worldId, state])
+  @@index([worldId, generation])
+}
+
+model Memory {
+  id                 String   @id @default(cuid())
+  worldId            String
+  world              World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  personId           String
+  person             Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  eventId            String?
+  event              Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  summary            String
+  strength           Float    @default(1)
+  accuracy           Float    @default(1)
+  formedAtTick       BigInt
+  lastRecalledAtTick BigInt?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([worldId])
+  @@index([worldId, personId])
+  @@index([worldId, eventId])
+}
+
+model Event {
+  id               String    @id @default(cuid())
+  worldId          String
+  world            World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  personId         String?
+  person           Person?   @relation(fields: [personId], references: [id], onDelete: SetNull)
+  locationId       String?
+  location         Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  tick             BigInt
+  type             String
+  title            String
+  description      String?
+  historicalWeight Float     @default(0)
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+
+  memories Memory[]
+
+  @@index([worldId])
+  @@index([worldId, tick])
+  @@index([worldId, type])
+}
+
+model Relationship {
+  id            String           @id @default(cuid())
+  worldId       String
+  world         World            @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  fromId        String
+  from          Person           @relation("RelationshipFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId          String
+  to            Person           @relation("RelationshipTo", fields: [toId], references: [id], onDelete: Cascade)
+  kind          RelationshipKind
+  strength      Float            @default(0)
+  startedAtTick BigInt?
+  endedAtTick   BigInt?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([worldId])
+  @@index([worldId, fromId])
+  @@index([worldId, toId])
+  @@unique([worldId, fromId, toId, kind])
+}
+
+model Location {
+  id        String     @id @default(cuid())
+  worldId   String
+  world     World      @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  name      String?
+  kind      String
+  parentId  String?
+  parent    Location?  @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Location[] @relation("LocationTree")
+  latitude  Float?
+  longitude Float?
+  metadata  Json?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  people  Person[]
+  events  Event[]
+  animals Animal[]
+  plants  Plant[]
+
+  @@index([worldId])
+  @@index([worldId, kind])
+  @@index([worldId, parentId])
+}
+
+model Animal {
+  id         String    @id @default(cuid())
+  worldId    String
+  world      World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  species    String
+  count      Int       @default(0)
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  traits     Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([worldId])
+  @@index([worldId, species])
+  @@index([worldId, locationId])
+}
+
+model Plant {
+  id         String    @id @default(cuid())
+  worldId    String
+  world      World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  species    String
+  count      Int       @default(0)
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  traits     Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([worldId])
+  @@index([worldId, species])
+  @@index([worldId, locationId])
+}
+
+
+
+
