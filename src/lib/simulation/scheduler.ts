@@ -110,6 +110,14 @@ function normalizeSystemResult(result: SimulationSystemResult | undefined): Simu
   return result ?? { success: true };
 }
 
+function latestKnownTick(world: World, latestPersistedTick: bigint | null | undefined): bigint {
+  return latestPersistedTick !== null &&
+    latestPersistedTick !== undefined &&
+    latestPersistedTick > world.currentTick
+    ? latestPersistedTick
+    : world.currentTick;
+}
+
 export class SimulationScheduler {
   private static readonly defaultScheduler = new SimulationScheduler(DEFAULT_SIMULATION_SYSTEMS);
 
@@ -174,6 +182,10 @@ export class SimulationScheduler {
 
     return prisma.$transaction(
       async (client) => {
+        await client.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "World" WHERE "id" = ${worldId} FOR UPDATE
+        `;
+
         const world = await client.world.findUnique({ where: { id: worldId } });
 
         if (!world) {
@@ -182,13 +194,19 @@ export class SimulationScheduler {
 
         assertRunnableWorld(world);
 
-        const tick = world.currentTick + 1n;
+        const latestTick = await client.simulationTick.aggregate({
+          _max: { tick: true },
+          where: { worldId: world.id },
+        });
+        const fromTick = latestKnownTick(world, latestTick._max.tick);
+        const tick = fromTick + 1n;
+        const tickWorld = fromTick === world.currentTick ? world : { ...world, currentTick: fromTick };
         const systemResults: Array<SimulationSystemResult & { systemName: string; systemLabel: string }> = [];
 
         await this.eventBus.emit("beforeTick", {
           worldId: world.id,
           tick,
-          metadata: { fromTick: world.currentTick.toString(), timeScale: world.timeScale },
+          metadata: { fromTick: fromTick.toString(), timeScale: world.timeScale },
         });
 
         for (const system of this.systems) {
@@ -209,7 +227,7 @@ export class SimulationScheduler {
 
           try {
             result = normalizeSystemResult(await system.run({
-              world,
+              world: tickWorld,
               tick,
               timeScale: world.timeScale,
               random,
@@ -263,7 +281,7 @@ export class SimulationScheduler {
             startedAt,
             completedAt,
             metadata: {
-              fromTick: world.currentTick.toString(),
+              fromTick: fromTick.toString(),
               toTick: tick.toString(),
               timeScale: world.timeScale,
               pipeline: systemResults.map((result) => ({
@@ -303,7 +321,7 @@ export class SimulationScheduler {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
         maxWait: 10_000,
         timeout: 30_000,
       },
@@ -517,10 +535,3 @@ export function resumeWorldSimulation(worldId: string): Promise<SimulationState>
 export function getSimulationState(worldId: string): Promise<SimulationState> {
   return SimulationScheduler.getSimulationState(worldId);
 }
-
-
-
-
-
-
-

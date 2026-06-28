@@ -25,6 +25,12 @@ async function track<T extends { slug: string }>(worldPromise: Promise<T>): Prom
   return world;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function expectSchedulerError(task: () => Promise<unknown>, code: string): Promise<void> {
   await expect(task()).rejects.toMatchObject({
     code,
@@ -173,6 +179,62 @@ describe("simulation scheduler tick persistence", () => {
     expect(ticks).toHaveLength(3);
     expect(ticks.every((tick) => tick.success)).toBe(true);
     expect(ticks.every((tick) => tick.systemCount === DEFAULT_SIMULATION_SYSTEMS.length)).toBe(true);
+  });
+
+  it("advances from the latest SimulationTick when World.currentTick is stale", async () => {
+    const world = await track(createActiveSandboxTestWorld());
+    const timestamp = new Date();
+
+    await prisma.simulationTick.create({
+      data: {
+        worldId: world.id,
+        tick: 1n,
+        durationMs: 0,
+        success: true,
+        systemCount: 0,
+        failedSystemCount: 0,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        metadata: { source: "stale-current-tick-regression" },
+      },
+    });
+
+    const result = await SimulationScheduler.advanceTick(world.id);
+    const updatedWorld = await prisma.world.findUniqueOrThrow({ where: { id: world.id } });
+    const ticks = await prisma.simulationTick.findMany({
+      orderBy: { tick: "asc" },
+      where: { worldId: world.id },
+    });
+    const metadata = ticks[1]?.metadata as { fromTick?: string } | null;
+
+    expect(result.tick).toBe(2n);
+    expect(updatedWorld.currentTick).toBe(2n);
+    expect(ticks.map((tick) => tick.tick)).toEqual([1n, 2n]);
+    expect(metadata?.fromTick).toBe("1");
+  });
+
+  it("serializes concurrent advances for the same world", async () => {
+    const world = await track(createActiveSandboxTestWorld());
+    const scheduler = new SimulationScheduler([
+      createPlaceholderSystem("slow-test-system", "Slow Test System", 10, async () => {
+        await delay(50);
+        return { success: true };
+      }),
+    ]);
+
+    const results = await Promise.all([
+      scheduler.advanceTick(world.id),
+      scheduler.advanceTick(world.id),
+    ]);
+    const updatedWorld = await prisma.world.findUniqueOrThrow({ where: { id: world.id } });
+    const ticks = await prisma.simulationTick.findMany({
+      orderBy: { tick: "asc" },
+      where: { worldId: world.id },
+    });
+
+    expect(results.map((result) => result.tick).sort()).toEqual([1n, 2n]);
+    expect(updatedWorld.currentTick).toBe(2n);
+    expect(ticks.map((tick) => tick.tick)).toEqual([1n, 2n]);
   });
 });
 
