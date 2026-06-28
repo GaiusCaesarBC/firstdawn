@@ -236,7 +236,6 @@ function getFingerprintCacheKey(world: CanonicalWorldSource, seed: string, grid:
 
   return stableStringify({
     seed,
-    currentTick: world.currentTick,
     tickDurationSeconds: world.tickDurationSeconds,
     dayLengthSeconds: world.dayLengthSeconds,
     yearLengthDays: world.yearLengthDays,
@@ -266,7 +265,7 @@ export function buildWorldFingerprint(
     return cached;
   }
 
-  const worldWithSeed = { ...world, seed };
+  const worldWithSeed = { ...world, seed, currentTick: 0n };
   const planet = getPlanetState(worldWithSeed);
   const terrain = getTerrainState(worldWithSeed, grid);
   const climate = getClimateState(worldWithSeed);

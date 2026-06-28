@@ -22,6 +22,7 @@ import {
   FIRST_DAWN_CANONICAL_WORLD,
   getCanonicalWorldSeed,
   verifyEnvironmentWorlds,
+  verifyWorldAgainstCanonical,
 } from "../../src/lib/worlds/canonical-world";
 
 function canonicalWorld(environment = WorldEnvironment.SANDBOX) {
@@ -213,6 +214,13 @@ describe("canonical world", () => {
     expect(buildWorldFingerprint(first).hash).toBe(buildWorldFingerprint(second).hash);
   });
 
+  it("changing current tick does not change canonical fingerprint", () => {
+    const baseline = atlasWorld("Sandbox", WorldEnvironment.SANDBOX);
+    const advanced = { ...baseline, currentTick: 2315n };
+
+    expect(buildWorldFingerprint(advanced).hash).toBe(buildWorldFingerprint(baseline).hash);
+    expect(verifyWorldAgainstCanonical(advanced).matches).toBe(true);
+  });
   it("regresses full atlas snapshots for canonical display aliases", () => {
     const sandbox = atlasWorld("Sandbox");
     const placeholder = atlasWorld("Placeholder");
