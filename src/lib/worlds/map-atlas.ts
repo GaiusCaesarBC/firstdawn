@@ -1,3 +1,5 @@
+import type { AnimalGridCell } from "../simulation/animal-engine";
+import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
 import type {
   AstronomyState,
 } from "../simulation/astronomy-engine";
@@ -148,6 +150,29 @@ export type AtlasCell = ClimateGridCell & Pick<
   regrowthRate: number;
   seasonalStressScore: number;
   plantTags: readonly string[];
+  dominantAnimalGuildKey: string;
+  dominantAnimalGuildName: string;
+  dominantAnimalGuildCategory: string;
+  dominantAnimalGuildColor: string;
+  animalSuitabilityScore: number;
+  herbivoreCapacity: number;
+  predatorCapacity: number;
+  preyAvailability: number;
+  animalDensity: number;
+  migrationPressure: number;
+  dangerScore: number;
+  huntingValue: number;
+  domesticationPotential: number;
+  animalBiodiversityScore: number;
+  carryingCapacityScore: number;
+  animalTags: readonly string[];
+  dominantSpeciesId: string;
+  dominantSpeciesName: string;
+  speciesCount: number;
+  totalWildlifePopulation: number;
+  averagePopulationHealth: number;
+  averageHabitatSuitability: number;
+  animalPopulations: AnimalGridCell["animalPopulations"];
 };
 
 export type AtlasStatistics = {
@@ -256,6 +281,7 @@ function combineAtlasCells(
   resourceCells: readonly PlanetResourceGridCell[],
   biomeCells: readonly BiomeGridCell[] = [],
   plantCells: readonly PlantGridCell[] = [],
+  animalCells: readonly AnimalGridCell[] = [],
 ): AtlasCell[] {
   const terrainById = new Map(terrainCells.map((cell) => [cell.id, cell]));
   const hydrologyById = new Map(hydrologyCells.map((cell) => [cell.id, cell]));
@@ -264,6 +290,7 @@ function combineAtlasCells(
   const resourcesById = new Map(resourceCells.map((cell) => [cell.id, cell]));
   const biomeById = new Map(biomeCells.map((cell) => [cell.id, cell]));
   const plantById = new Map(plantCells.map((cell) => [cell.id, cell]));
+  const animalById = new Map(animalCells.map((cell) => [cell.id, cell]));
 
   return climateCells.flatMap((cell) => {
     const terrainCell = terrainById.get(cell.id);
@@ -273,6 +300,7 @@ function combineAtlasCells(
     const resourceCell = resourcesById.get(cell.id);
     const biomeCell = biomeById.get(cell.id);
     const plantCell = plantById.get(cell.id);
+    const animalCell = animalById.get(cell.id);
 
     if (!terrainCell || !hydrologyCell || !atmosphereCell || !weatherCell || !resourceCell) {
       return [];
@@ -368,6 +396,29 @@ function combineAtlasCells(
       regrowthRate: plantCell?.regrowthRate ?? 0,
       seasonalStressScore: plantCell?.seasonalStressScore ?? 0,
       plantTags: [...(plantCell?.plantTags ?? [])],
+      dominantAnimalGuildKey: animalCell?.dominantAnimalGuildKey ?? "none",
+      dominantAnimalGuildName: animalCell?.dominantAnimalGuildName ?? "No Established Animal Guild",
+      dominantAnimalGuildCategory: animalCell?.dominantAnimalGuildCategory ?? "specialist",
+      dominantAnimalGuildColor: animalCell?.dominantAnimalGuildColor ?? "#2d3238",
+      animalSuitabilityScore: animalCell?.animalSuitabilityScore ?? 0,
+      herbivoreCapacity: animalCell?.herbivoreCapacity ?? 0,
+      predatorCapacity: animalCell?.predatorCapacity ?? 0,
+      preyAvailability: animalCell?.preyAvailability ?? 0,
+      animalDensity: animalCell?.animalDensity ?? 0,
+      migrationPressure: animalCell?.migrationPressure ?? 0,
+      dangerScore: animalCell?.dangerScore ?? 0,
+      huntingValue: animalCell?.huntingValue ?? 0,
+      domesticationPotential: animalCell?.domesticationPotential ?? 0,
+      animalBiodiversityScore: animalCell?.animalBiodiversityScore ?? 0,
+      carryingCapacityScore: animalCell?.carryingCapacityScore ?? 0,
+      animalTags: [...(animalCell?.animalTags ?? [])],
+      dominantSpeciesId: animalCell?.dominantSpeciesId ?? "none",
+      dominantSpeciesName: animalCell?.dominantSpeciesName ?? "No Established Wildlife",
+      speciesCount: animalCell?.speciesCount ?? 0,
+      totalWildlifePopulation: animalCell?.totalWildlifePopulation ?? 0,
+      averagePopulationHealth: animalCell?.averagePopulationHealth ?? 0,
+      averageHabitatSuitability: animalCell?.averageHabitatSuitability ?? 0,
+      animalPopulations: [...(animalCell?.animalPopulations ?? [])],
     }];
   });
 }
@@ -442,6 +493,7 @@ export function buildAtlasSnapshot(
   const resourceState = getPlanetResourcesStateAtTick(world, tick, grid);
   const biomeState = world.seed?.trim() ? getBiomeStateAtTick(world, tick, grid) : null;
   const plantState = world.seed?.trim() ? getPlantEcologyStateAtTick(world, tick, grid) : null;
+  const animalState = world.seed?.trim() ? getAnimalEcologyStateAtTick(world, tick, grid) : null;
   const fingerprint = buildWorldFingerprint(world, grid);
   const environmentVerification = verifyWorldAgainstCanonical(world, grid);
 
@@ -498,6 +550,7 @@ export function buildAtlasSnapshot(
       resourceState.cells,
       biomeState?.cells ?? [],
       plantState?.cells ?? [],
+      animalState?.cells ?? [],
     ),
   };
 }

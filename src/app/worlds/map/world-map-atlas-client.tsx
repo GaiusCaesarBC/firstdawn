@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import type { AtlasCell, AtlasSnapshot, AtlasWorldOption } from "../../../lib/worlds/map-atlas";
+import type { WorldHealthBadge, WorldHealthSummary } from "../../../lib/simulation/world-health";
 
 type LayerId =
   | "planet"
@@ -106,7 +107,9 @@ type HoverState = {
 type WorldMapAtlasClientProps = {
   worlds: AtlasWorldOption[];
   initialSnapshot: AtlasSnapshot;
+  initialHealth?: WorldHealthSummary | null;
   fetchSnapshot?: (worldId: string, day: number) => Promise<AtlasSnapshot>;
+  fetchHealth?: (worldId: string) => Promise<WorldHealthSummary>;
 };
 
 const MAP_CELL_SIZE = 28;
@@ -702,7 +705,7 @@ function getLayerColor(snapshot: AtlasSnapshot, cell: AtlasCell, layerId: LayerI
     case "vegetation":
       return interpolateColor("#20251d", cell.dominantPlantColor || "#5f7d3a", clamp(cell.plantDensity * 0.72 + cell.biomassScore * 0.28, 0, 1));
     case "animals":
-      return "#2d3238";
+      return interpolateColor("#20252a", cell.dominantAnimalGuildColor || "#7d8f4b", clamp(cell.animalDensity * 0.56 + cell.averageHabitatSuitability * 0.24 + cell.averagePopulationHealth * 0.2, 0, 1));
     case "civilizations":
       return "#303238";
     default:
@@ -734,7 +737,7 @@ function getLegendItems(snapshot: AtlasSnapshot, layerId: LayerId): LegendItem[]
     case "vegetation":
       return getTopCellEntries(snapshot.cells, (cell) => cell.dominantPlantKey, (cell) => ({ label: formatAtlasLabel(cell.dominantPlantName, "No Established Plant Life"), color: cell.dominantPlantColor || "#5f7d3a" }), 8);
     case "animals":
-      return [{ label: "Not Generated Yet", color: "#2d3238" }];
+      return getTopCellEntries(snapshot.cells.filter((cell) => cell.dominantSpeciesId !== "none"), (cell) => cell.dominantSpeciesId, (cell) => ({ label: cell.dominantSpeciesName, color: cell.dominantAnimalGuildColor || "#7d8f4b" }), 8);
     case "civilizations":
       return [{ label: "Not Generated Yet", color: "#303238" }];
     case "watersheds":
@@ -966,6 +969,20 @@ type FutureLayerMetrics = {
   regrowthRate: number;
   seasonalStressScore: number;
   plantTags: readonly string[];
+  dominantSpeciesName: string;
+  dominantAnimalGuildName: string;
+  dominantAnimalGuildColor: string;
+  animalCoverage: string | null;
+  animalSuitabilityScore: number;
+  animalDensity: number;
+  totalWildlifePopulation: number;
+  speciesCount: number;
+  averagePopulationHealth: number;
+  averageHabitatSuitability: number;
+  foodAvailability: number;
+  migrationPressure: number;
+  animalPopulations: AtlasCell["animalPopulations"];
+  animalTags: readonly string[];
 };
 
 function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell | null): FutureLayerMetrics {
@@ -997,6 +1014,20 @@ function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell 
       regrowthRate: selectedCell.regrowthRate,
       seasonalStressScore: selectedCell.seasonalStressScore,
       plantTags: selectedCell.plantTags,
+      dominantSpeciesName: selectedCell.dominantSpeciesName,
+      dominantAnimalGuildName: selectedCell.dominantAnimalGuildName,
+      dominantAnimalGuildColor: selectedCell.dominantAnimalGuildColor,
+      animalCoverage: null,
+      animalSuitabilityScore: selectedCell.animalSuitabilityScore,
+      animalDensity: selectedCell.animalDensity,
+      totalWildlifePopulation: selectedCell.totalWildlifePopulation,
+      speciesCount: selectedCell.speciesCount,
+      averagePopulationHealth: selectedCell.averagePopulationHealth,
+      averageHabitatSuitability: selectedCell.averageHabitatSuitability,
+      foodAvailability: selectedCell.animalPopulations[0]?.foodAvailability ?? selectedCell.preyAvailability,
+      migrationPressure: selectedCell.migrationPressure,
+      animalPopulations: selectedCell.animalPopulations,
+      animalTags: selectedCell.animalTags,
     };
   }
 
@@ -1015,6 +1046,15 @@ function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell 
     category: titleize(formatAtlasLabel(cell.dominantPlantCategory, "none")),
     color: cell.dominantPlantColor || "#5f7d3a",
     tags: cell.plantTags,
+  }));
+  const animalCells = cells.some((cell) => cell.totalWildlifePopulation > 0)
+    ? cells.filter((cell) => cell.totalWildlifePopulation > 0)
+    : cells;
+  const dominantAnimal = getTopCellEntry(animalCells, (cell) => cell.dominantSpeciesId, (cell) => ({
+    name: formatAtlasLabel(cell.dominantSpeciesName, "No Established Wildlife"),
+    guildName: formatAtlasLabel(cell.dominantAnimalGuildName, "No Established Animal Guild"),
+    color: cell.dominantAnimalGuildColor || "#7d8f4b",
+    tags: cell.animalTags,
   }));
   const totalCells = Math.max(cells.length, 1);
 
@@ -1045,6 +1085,20 @@ function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell 
     regrowthRate: averageCellMetric(cells, (cell) => cell.regrowthRate),
     seasonalStressScore: averageCellMetric(cells, (cell) => cell.seasonalStressScore),
     plantTags: dominantPlant?.meta.tags ?? [],
+    dominantSpeciesName: dominantAnimal?.meta.name ?? "No Established Wildlife",
+    dominantAnimalGuildName: dominantAnimal?.meta.guildName ?? "No Established Animal Guild",
+    dominantAnimalGuildColor: dominantAnimal?.meta.color ?? "#7d8f4b",
+    animalCoverage: dominantAnimal ? formatPercent(dominantAnimal.count / totalCells) : null,
+    animalSuitabilityScore: averageCellMetric(cells, (cell) => cell.animalSuitabilityScore),
+    animalDensity: averageCellMetric(cells, (cell) => cell.animalDensity),
+    totalWildlifePopulation: cells.reduce((sum, cell) => sum + cell.totalWildlifePopulation, 0),
+    speciesCount: Math.max(...cells.map((cell) => cell.speciesCount), 0),
+    averagePopulationHealth: averageCellMetric(cells, (cell) => cell.averagePopulationHealth),
+    averageHabitatSuitability: averageCellMetric(cells, (cell) => cell.averageHabitatSuitability),
+    foodAvailability: averageCellMetric(cells, (cell) => cell.animalPopulations[0]?.foodAvailability ?? cell.preyAvailability),
+    migrationPressure: averageCellMetric(cells, (cell) => cell.migrationPressure),
+    animalPopulations: dominantAnimal ? cells.find((cell) => cell.dominantSpeciesName === dominantAnimal.meta.name)?.animalPopulations ?? [] : [],
+    animalTags: dominantAnimal?.meta.tags ?? [],
   };
 }
 function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ label: string; value: string }> {
@@ -1145,8 +1199,17 @@ function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ 
         { label: "Average regrowth", value: formatNumber(metrics.regrowthRate, 3) },
       ];
     }
-    case "animals":
-      return [{ label: "Animal layer", value: "Not Generated Yet" }];
+    case "animals": {
+      const metrics = getFutureLayerMetrics(snapshot, null);
+      return [
+        { label: "Dominant species", value: metrics.dominantSpeciesName },
+        { label: "Dominant guild", value: metrics.dominantAnimalGuildName },
+        { label: "Coverage", value: metrics.animalCoverage ?? "-" },
+        { label: "Total population", value: formatNumber(metrics.totalWildlifePopulation, 0) },
+        { label: "Average health", value: formatNumber(metrics.averagePopulationHealth, 3) },
+        { label: "Migration pressure", value: formatNumber(metrics.migrationPressure, 3) },
+      ];
+    }
     case "civilizations":
       return [{ label: "Civilization layer", value: "Not Generated Yet" }];
     case "watersheds": {
@@ -1184,6 +1247,17 @@ async function fetchAtlasSnapshotFromApi(worldId: string, day: number): Promise<
 
   return response.json() as Promise<AtlasSnapshot>;
 }
+async function fetchWorldHealthFromApi(worldId: string): Promise<WorldHealthSummary> {
+  const response = await fetch(`/api/worlds/health?world=${encodeURIComponent(worldId)}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`World health request failed: ${response.status}`);
+  }
+
+  return response.json() as Promise<WorldHealthSummary>;
+}
 
 function DetailCard({ label, value }: { label: string; value: string }) {
   return (
@@ -1194,6 +1268,57 @@ function DetailCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function getHealthBadgeClass(badge: WorldHealthBadge): string {
+  if (badge === "Healthy") {
+    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
+  }
+
+  if (badge === "Warning") {
+    return "border-amber-300/40 bg-amber-300/10 text-amber-100";
+  }
+
+  return "border-red-400/40 bg-red-950/30 text-red-100";
+}
+
+function formatHealthList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(", ") : "None";
+}
+
+function WorldHealthPanel({ health, loading, error }: { health: WorldHealthSummary | null; loading: boolean; error: string | null }) {
+  const badge = health?.badge ?? "Warning";
+
+  return (
+    <section data-testid="world-health-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">World Health</p>
+          <p className="mt-2 text-base text-stone-50">{health?.worldName ?? "Unavailable"}</p>
+        </div>
+        <span className={`inline-flex border px-2.5 py-1 text-xs font-semibold uppercase tracking-normal ${getHealthBadgeClass(badge)}`}>
+          {loading ? "Loading" : health?.badge ?? "Warning"}
+        </span>
+      </div>
+      {error ? <p className="mt-3 text-sm text-red-100">{error}</p> : null}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+        <DetailCard label="Status" value={health?.status ?? "-"} />
+        <DetailCard label="World.currentTick" value={health?.currentTick ?? "-"} />
+        <DetailCard label="Latest SimulationTick.tickNumber" value={health?.latestSimulationTickNumber ?? "-"} />
+        <DetailCard label="Last Tick" value={health?.lastTickStatus ?? "missing"} />
+        <DetailCard label="Last Successful Tick Time" value={health?.lastSuccessfulTickTime ?? "-"} />
+        <DetailCard label="Failed Systems" value={health ? formatHealthList(health.failedSystems) : "-"} />
+        <DetailCard label="Last Error" value={health?.lastErrorMessage ?? "-"} />
+        <DetailCard label="Biome Coverage" value={health ? formatPercent(health.biomeCoveragePercent) : "-"} />
+        <DetailCard label="Plant Coverage" value={health ? formatPercent(health.plantCoveragePercent) : "-"} />
+        <DetailCard label="Animal Species" value={health ? formatNumber(health.animalSpeciesCount, 0) : "-"} />
+        <DetailCard label="Occupied Habitat" value={health ? `${formatNumber(health.occupiedAnimalHabitatPercent, 2)} %` : "-"} />
+        <DetailCard label="Wildlife Population" value={health ? formatNumber(health.totalWildlifePopulation, 0) : "-"} />
+        <DetailCard label="Animal Suitability" value={health ? formatNumber(health.averageAnimalHabitatSuitability, 3) : "-"} />
+        <DetailCard label="Animal Health" value={health ? formatNumber(health.averageAnimalHealth, 3) : "-"} />
+        <DetailCard label="Weather Snapshot" value={health?.weatherSnapshotAvailable ? "Available" : "Missing"} />
+      </div>
+    </section>
+  );
+}
 function FutureMetricRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 text-xs text-stone-300">
@@ -1263,6 +1388,36 @@ function VegetationEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
   );
 }
 
+
+function AnimalEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
+  const topPopulations = metrics.animalPopulations.filter((population) => population.population > 0).slice(0, 5);
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 h-4 w-4 shrink-0 rounded-full border border-white/20" style={{ backgroundColor: metrics.dominantAnimalGuildColor }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Animals</p>
+          <p className="mt-2 text-base text-stone-50">{metrics.dominantSpeciesName}</p>
+          <p className="mt-1 text-xs text-stone-400">{metrics.dominantAnimalGuildName}{metrics.animalCoverage ? ` / ${metrics.animalCoverage}` : ""}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2">
+        <FutureMetricRow label={metrics.isCellScope ? "Species present" : "Peak cell species"} value={formatNumber(metrics.speciesCount, 0)} />
+        <FutureMetricRow label={metrics.isCellScope ? "Population" : "Total population"} value={formatNumber(metrics.totalWildlifePopulation, 0)} />
+        <FutureMetricRow label={metrics.isCellScope ? "Suitability" : "Average suitability"} value={formatNumber(metrics.averageHabitatSuitability, 3)} />
+        <FutureMetricRow label={metrics.isCellScope ? "Health" : "Average health"} value={formatNumber(metrics.averagePopulationHealth, 3)} />
+        <FutureMetricRow label="Food availability" value={formatNumber(metrics.foodAvailability, 3)} />
+        <FutureMetricRow label="Migration pressure" value={formatNumber(metrics.migrationPressure, 3)} />
+        <FutureMetricRow label="Tags" value={formatTagList(metrics.animalTags)} />
+        {topPopulations.map((population) => (
+          <FutureMetricRow key={population.speciesId} label={population.speciesName} value={`${formatNumber(population.population, 0)} / ${formatNumber(population.health, 2)}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FutureLayerStatePanel({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "error" | "loading" }) {
   return (
     <section data-testid="future-layers-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
@@ -1311,7 +1466,7 @@ export function FutureLayersPanel({
       <div className="mt-4 grid gap-3">
         <BiomeEcologyCard metrics={metrics} />
         <VegetationEcologyCard metrics={metrics} />
-        <LayerStatusCard label="Animals" value="Animal Ecology Not Generated Yet" />
+        <AnimalEcologyCard metrics={metrics} />
         <LayerStatusCard label="Civilizations" value="Civilization Systems Not Generated Yet" />
       </div>
     </section>
@@ -1340,7 +1495,9 @@ function SectionHeading({ eyebrow, title, description }: { eyebrow: string; titl
 export function WorldMapAtlasClient({
   worlds,
   initialSnapshot,
+  initialHealth = null,
   fetchSnapshot = fetchAtlasSnapshotFromApi,
+  fetchHealth = fetchWorldHealthFromApi,
 }: WorldMapAtlasClientProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [selectedLayerId, setSelectedLayerId] = useState<LayerId>("planet");
@@ -1353,6 +1510,9 @@ export function WorldMapAtlasClient({
   const [canvasSize, setCanvasSize] = useState({ width: 1120, height: 680 });
   const [view, setView] = useState(() => createFitView(initialSnapshot, 1120, 680));
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<WorldHealthSummary | null>(initialHealth);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [isHealthLoading, setIsHealthLoading] = useState(false);
   const [isAtlasLoading, setIsAtlasLoading] = useState(false);
   const [showLegend, setShowLegend] = useState(true);
   const [legendPinned, setLegendPinned] = useState(false);
@@ -1370,6 +1530,7 @@ export function WorldMapAtlasClient({
   const baseLayerBufferRef = useRef<HTMLCanvasElement | null>(null);
   const baseLayerCacheKeyRef = useRef<string>("");
   const continentCacheRef = useRef<{ land?: { id: number; center: { row: number; column: number }; size: number }; ocean?: { id: number; center: { row: number; column: number }; size: number } } | null>(null);
+  const hasMountedHealthRef = useRef(false);
 
   const selectedWorld = worlds.find((world) => world.id === selectedWorldId) ?? worlds[0];
   const snapshotCellById = useMemo(() => new Map(snapshot.cells.map((cell) => [cell.id, cell])), [snapshot]);
@@ -1523,6 +1684,38 @@ export function WorldMapAtlasClient({
       void loadSnapshot(selectedWorldId, committedDay);
     });
   }, [committedDay, selectedWorldId, snapshot.selectedDay, snapshot.worldId]);
+
+  useEffect(() => {
+    if (!hasMountedHealthRef.current) {
+      hasMountedHealthRef.current = true;
+      return;
+    }
+
+    let cancelled = false;
+    setHealthError(null);
+    setIsHealthLoading(true);
+
+    void fetchHealth(selectedWorldId)
+      .then((nextHealth) => {
+        if (!cancelled) {
+          setHealth(nextHealth);
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setHealthError(loadError instanceof Error ? loadError.message : "Unable to load world health.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsHealthLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchHealth, selectedWorldId]);
 
 
   useEffect(() => {
@@ -2394,6 +2587,7 @@ export function WorldMapAtlasClient({
           </div>
 
           <aside className="space-y-6">
+            <WorldHealthPanel health={health} loading={isHealthLoading} error={healthError} />
             <FutureLayersPanel snapshot={snapshot} selectedCell={inspectorCell} loading={isAtlasLoading || isPending} error={error} />
 
             <section data-testid="statistics-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
@@ -2578,7 +2772,20 @@ export function WorldMapAtlasClient({
                       </div>
                     </div>
 
-                    <LayerStatusCard label="Animals" value="Animal Ecology Not Generated Yet" />
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Animals</p>
+                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
+                        <p>Dominant species {formatAtlasLabel(inspectorCell.dominantSpeciesName, "No Established Wildlife")}</p>
+                        <p>Dominant guild {formatAtlasLabel(inspectorCell.dominantAnimalGuildName, "No Established Animal Guild")}</p>
+                        <p>Species present {formatNumber(inspectorCell.speciesCount, 0)}</p>
+                        <p>Total population {formatNumber(inspectorCell.totalWildlifePopulation, 0)}</p>
+                        <p>Habitat suitability {formatNumber(inspectorCell.averageHabitatSuitability, 3)}</p>
+                        <p>Health {formatNumber(inspectorCell.averagePopulationHealth, 3)}</p>
+                        <p>Food availability {formatNumber(inspectorCell.animalPopulations[0]?.foodAvailability ?? 0, 3)}</p>
+                        <p>Migration pressure {formatNumber(inspectorCell.migrationPressure, 3)}</p>
+                        <p>Populations {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 8).map((population) => `${population.speciesName}: ${formatNumber(population.population, 0)}`).join(", ") || "None"}</p>
+                      </div>
+                    </div>
                     <LayerStatusCard label="Civilizations" value="Civilization Systems Not Generated Yet" />
                   </div>
                 </div>

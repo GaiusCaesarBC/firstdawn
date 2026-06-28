@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   getAnimalEcologyState,
+  getAnimalPopulationDefinitions,
   persistAnimalEcologyState,
+  scoreAnimalSpeciesHabitat,
   type AnimalGridCell,
 } from "../../src/lib/simulation/animal-engine";
 import { createGrid } from "../../src/lib/simulation/grid/grid";
@@ -10,6 +12,7 @@ import { getPlantEcologyState } from "../../src/lib/simulation/plant-engine";
 import { DEFAULT_SIMULATION_SYSTEMS } from "../../src/lib/simulation/systems";
 import { run as runAnimalsSystem } from "../../src/lib/simulation/systems/animals";
 import { DEFAULT_WORLD_TIME_CONFIG } from "../../src/lib/simulation/time-engine";
+import { buildAtlasSnapshot } from "../../src/lib/worlds/map-atlas";
 
 const baseWorld = {
   id: "animal-test-world",
@@ -56,6 +59,18 @@ function cellsForBiomes(cells: readonly AnimalGridCell[], keys: readonly string[
 }
 
 describe("animal ecology foundation", () => {
+  it("defines representative species for deterministic population simulation", () => {
+    const definitions = getAnimalPopulationDefinitions();
+    const ids = new Set(definitions.map((definition) => definition.id));
+
+    expect(definitions.length).toBeGreaterThanOrEqual(20);
+    expect(definitions.length).toBeLessThanOrEqual(30);
+    for (const id of ["rabbit", "deer", "bison", "elephant", "antelope", "goat", "yak", "wolf", "lion", "tiger", "bear", "fox", "eagle", "pig", "boar", "raccoon", "crow", "salmon", "tuna", "shark", "seal", "polar-bear", "camel"]) {
+      expect(ids.has(id)).toBe(true);
+    }
+    expect(definitions.every((definition) => definition.preferredBiomes.length > 0 && definition.bodyMass > 0)).toBe(true);
+  });
+
   it("generates animal ecology data for all valid cells", () => {
     const animals = getAnimalEcologyState(baseWorld);
 
@@ -181,8 +196,16 @@ describe("animal ecology foundation", () => {
       planet: {
         findUnique: async () => ({ id: "planet-with-plants" }),
       },
+      animalPopulation: {
+        deleteMany: async () => ({}),
+        createMany: async (input: unknown) => {
+          updates.push(input);
+          return input;
+        },
+      },
       planetCell: {
         findMany: async () => plantState.cells.map((cell) => ({
+          id: `planet-cell-${cell.id}`,
           planetId: "planet-with-plants",
           cellId: cell.id,
           plantGeneratedAt: now,
@@ -202,6 +225,12 @@ describe("animal ecology foundation", () => {
           domesticationPotential: 0,
           animalBiodiversityScore: 0,
           carryingCapacityScore: 0,
+          dominantSpeciesId: "none",
+          dominantSpeciesName: "No Established Wildlife",
+          animalSpeciesCount: 0,
+          totalWildlifePopulation: 0,
+          averageAnimalHealth: 0,
+          averageHabitatSuitability: 0,
           animalTags: [],
         })),
         update: async (input: unknown) => {
@@ -221,6 +250,65 @@ describe("animal ecology foundation", () => {
 
     expect(result.success).toBe(true);
     expect(result.metadata).toMatchObject({ deterministic: true, persistent: true });
-    expect(updates.length).toBe(648);
+    expect(updates.length).toBeGreaterThan(648);
+  });
+
+  it("scores species habitat by biome suitability rather than latitude", () => {
+    const animals = getAnimalEcologyState(baseWorld);
+    const grassland = animals.cells.find((cell) => cell.biomeKey === "temperate-grassland" || cell.biomeKey === "savanna");
+    const ocean = animals.cells.find((cell) => cell.biomeKey === "ocean");
+    const camel = getAnimalPopulationDefinitions().find((definition) => definition.id === "camel");
+    const tuna = getAnimalPopulationDefinitions().find((definition) => definition.id === "tuna");
+
+    expect(grassland && ocean && camel && tuna).toBeTruthy();
+    expect(scoreAnimalSpeciesHabitat(camel!, grassland!, { herbivores: grassland!.herbivoreCapacity, prey: grassland!.preyAvailability })).toBeGreaterThan(scoreAnimalSpeciesHabitat(camel!, ocean!, { herbivores: ocean!.herbivoreCapacity, prey: ocean!.preyAvailability }));
+    expect(scoreAnimalSpeciesHabitat(tuna!, ocean!, { herbivores: ocean!.herbivoreCapacity, prey: ocean!.preyAvailability })).toBeGreaterThan(scoreAnimalSpeciesHabitat(tuna!, grassland!, { herbivores: grassland!.herbivoreCapacity, prey: grassland!.preyAvailability }));
+  });
+
+  it("generates deterministic population, health, food, and migration records", () => {
+    const animals = getAnimalEcologyState(baseWorld);
+    const populated = animals.cells.filter((cell) => cell.totalWildlifePopulation > 0);
+
+    expect(populated.length).toBeGreaterThan(0);
+    expect(animals.summary.animalSpeciesCount).toBeGreaterThan(8);
+    expect(animals.summary.totalWildlifePopulation).toBeGreaterThan(0);
+    expect(animals.summary.averageHabitatSuitability).toBeGreaterThan(0);
+    expect(animals.summary.averageHealth).toBeGreaterThan(0);
+    expect(populated.every((cell) => cell.animalPopulations.every((population) => population.population >= 0 && population.population <= population.carryingCapacity))).toBe(true);
+  });
+
+  it("applies deterministic logistic growth without exceeding carrying capacity", () => {
+    const early = getAnimalEcologyState({ ...baseWorld, currentTick: 1n });
+    const later = getAnimalEcologyState({ ...baseWorld, currentTick: 180n });
+
+    expect(later.summary.totalWildlifePopulation).toBeGreaterThanOrEqual(early.summary.totalWildlifePopulation);
+    expect(later.cells.every((cell) => cell.animalPopulations.every((population) => population.population <= population.carryingCapacity))).toBe(true);
+  });
+
+  it("reduces health under starvation pressure", () => {
+    const animals = getAnimalEcologyState(hotDryWorld);
+    const hungry = animals.cells.flatMap((cell) => cell.animalPopulations).filter((population) => population.population > 0 && population.foodAvailability <= 0.24);
+    const fed = animals.cells.flatMap((cell) => cell.animalPopulations).filter((population) => population.population > 0 && population.foodAvailability >= 0.52);
+
+    expect(hungry.length).toBeGreaterThan(0);
+    expect(fed.length).toBeGreaterThan(0);
+    expect(average(hungry.map((population) => population.health))).toBeLessThan(average(fed.map((population) => population.health)));
+  });
+
+  it("changes reproduction and population pressure across seasons deterministically", () => {
+    const winter = getAnimalEcologyState({ ...baseWorld, currentTick: 0n });
+    const spring = getAnimalEcologyState({ ...baseWorld, currentTick: 1400n });
+
+    expect(animalSignature(winter.cells)).not.toEqual(animalSignature(spring.cells));
+    expect(spring.summary.totalWildlifePopulation).toBeGreaterThan(0);
+  });
+
+  it("serializes animal populations into atlas snapshots", () => {
+    const snapshot = buildAtlasSnapshot(baseWorld as never, 1);
+    const populated = snapshot.cells.find((cell) => cell.totalWildlifePopulation > 0);
+
+    expect(populated).toBeTruthy();
+    expect(populated?.animalPopulations.length).toBeGreaterThan(0);
+    expect(populated?.dominantSpeciesId).not.toBe("none");
   });
 });

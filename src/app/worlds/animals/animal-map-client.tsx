@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import type { AnimalGuildDefinition } from "../../../lib/simulation/animal-definitions";
+import type { AnimalGuildDefinition, AnimalSpeciesDefinition } from "../../../lib/simulation/animal-definitions";
 import type { AnimalGridCell, AnimalSummary, DominantAnimalGuildKey } from "../../../lib/simulation/animal-engine";
 
 type AnimalMapClientProps = {
@@ -14,9 +14,10 @@ type AnimalMapClientProps = {
   cells: readonly AnimalGridCell[];
   summary: AnimalSummary;
   definitions: readonly AnimalGuildDefinition[];
+  speciesDefinitions: readonly AnimalSpeciesDefinition[];
 };
 
-type MapMode = "density" | "danger" | "hunting" | "domestication" | "dominant";
+type MapMode = "density" | "suitability" | "health" | "migration" | "danger" | "hunting" | "domestication" | "dominant" | "species";
 
 function formatNumber(value: number, digits = 2): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
@@ -42,8 +43,22 @@ function scaleColor(value: number, palette: readonly string[]): string {
   return palette[4];
 }
 
-function modeColor(cell: AnimalGridCell, mode: MapMode, definition?: AnimalGuildDefinition): string {
+function getSpeciesPopulation(cell: AnimalGridCell, speciesId: string) {
+  return cell.animalPopulations.find((population) => population.speciesId === speciesId) ?? null;
+}
+
+function modeColor(cell: AnimalGridCell, mode: MapMode, definition?: AnimalGuildDefinition, selectedSpeciesId = "rabbit"): string {
   switch (mode) {
+    case "suitability":
+      return scaleColor(cell.averageHabitatSuitability, ["#263038", "#3d5860", "#5f8368", "#88a458", "#c2ad54"]);
+    case "health":
+      return scaleColor(cell.averagePopulationHealth, ["#3a2630", "#68494a", "#8b7650", "#8aa15f", "#b7d777"]);
+    case "migration":
+      return scaleColor(cell.migrationPressure, ["#252d34", "#48555d", "#727051", "#a47044", "#bc4e3f"]);
+    case "species": {
+      const population = getSpeciesPopulation(cell, selectedSpeciesId);
+      return scaleColor(population ? Math.max(population.population / Math.max(population.carryingCapacity, 1), population.habitatSuitability * 0.5) : 0, ["#252a30", "#3c5160", "#5d7568", "#8b9a58", "#d0b45a"]);
+    }
     case "danger":
       return scaleColor(cell.dangerScore, ["#25313a", "#5f5040", "#8d6040", "#a4473f", "#7f2f37"]);
     case "hunting":
@@ -76,6 +91,7 @@ export function AnimalMapClient({
   cells,
   summary,
   definitions,
+  speciesDefinitions,
 }: AnimalMapClientProps) {
   const initialCell = useMemo(
     () => cells.find((cell) => cell.animalDensity >= 0.35) ?? cells[0] ?? null,
@@ -83,6 +99,7 @@ export function AnimalMapClient({
   );
   const [selectedCellId, setSelectedCellId] = useState(initialCell?.id ?? "");
   const [mode, setMode] = useState<MapMode>("density");
+  const [selectedSpeciesId, setSelectedSpeciesId] = useState(speciesDefinitions[0]?.id ?? "rabbit");
   const selectedCell = cells.find((cell) => cell.id === selectedCellId) ?? initialCell;
   const definitionByKey = new Map<DominantAnimalGuildKey, AnimalGuildDefinition>(definitions.map((definition) => [definition.key, definition]));
   const presentDefinitions = definitions.filter((definition) => summary.dominantAnimalDistribution[definition.key] > 0);
@@ -106,22 +123,35 @@ export function AnimalMapClient({
 
       <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <DetailCard label="Seed" value={seed} />
-        <DetailCard label="Animal Capacity" value={formatNumber(summary.totalAnimalBiomassCapacity, 3)} />
-        <DetailCard label="Animal Density" value={summary.averageAnimalDensity.toFixed(3)} />
-        <DetailCard label="Civilization Food" value={summary.civilizationFoodSupportScore.toFixed(3)} />
+        <DetailCard label="Species Count" value={formatNumber(summary.animalSpeciesCount, 0)} />
+        <DetailCard label="Total Population" value={formatNumber(summary.totalWildlifePopulation, 0)} />
+        <DetailCard label="Average Health" value={summary.averageHealth.toFixed(3)} />
       </section>
 
       <section className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="border border-white/10 bg-black/20 p-3">
-          <div className="mb-3 flex flex-wrap gap-1 border border-white/10 bg-black/30 p-1">
-            {(["density", "danger", "hunting", "domestication", "dominant"] as const).map((entry) => (
+          <div className="mb-3 flex flex-wrap gap-2 border border-white/10 bg-black/30 p-1">
+            <select
+              aria-label="Selected animal species"
+              className="border border-white/10 bg-black/40 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-100"
+              onChange={(event) => {
+                setSelectedSpeciesId(event.target.value);
+                setMode("species");
+              }}
+              value={selectedSpeciesId}
+            >
+              {speciesDefinitions.map((species) => (
+                <option key={species.id} value={species.id}>{species.name}</option>
+              ))}
+            </select>
+            {(["density", "suitability", "health", "migration", "species", "danger", "hunting", "domestication", "dominant"] as const).map((entry) => (
               <button
                 className={`px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition ${mode === entry ? "bg-dawn-gold text-black" : "text-stone-300 hover:bg-white/10"}`}
                 key={entry}
                 onClick={() => setMode(entry)}
                 type="button"
               >
-                {entry === "dominant" ? "Guild" : entry}
+                {entry === "dominant" ? "Guild" : entry === "species" ? "Species" : entry}
               </button>
             ))}
           </div>
@@ -131,7 +161,8 @@ export function AnimalMapClient({
           >
             {cells.map((cell) => {
               const definition = definitionByKey.get(cell.dominantAnimalGuildKey);
-              const color = modeColor(cell, mode, definition);
+              const color = modeColor(cell, mode, definition, selectedSpeciesId);
+              const speciesPopulation = getSpeciesPopulation(cell, selectedSpeciesId);
 
               return (
                 <button
@@ -140,7 +171,7 @@ export function AnimalMapClient({
                   key={cell.id}
                   onClick={() => setSelectedCellId(cell.id)}
                   style={{ backgroundColor: color, opacity: mode === "dominant" ? Math.max(0.3, cell.animalDensity) : 1 }}
-                  title={`${cell.id}: ${cell.dominantAnimalGuildName} / ${cell.animalDensity.toFixed(3)}`}
+                  title={`${cell.id}: ${mode === "species" ? `${speciesPopulation?.speciesName ?? selectedSpeciesId} / ${speciesPopulation?.population ?? 0}` : `${cell.dominantSpeciesName} / ${cell.totalWildlifePopulation}`}`}
                   type="button"
                 />
               );
@@ -163,12 +194,21 @@ export function AnimalMapClient({
                 </div>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <DetailCard label="Suitability" value={selectedCell.animalSuitabilityScore.toFixed(3)} />
+                <DetailCard label="Dominant Species" value={selectedCell.dominantSpeciesName} />
+                <DetailCard label="Species Present" value={formatNumber(selectedCell.speciesCount, 0)} />
+                <DetailCard label="Total Population" value={formatNumber(selectedCell.totalWildlifePopulation, 0)} />
+                <DetailCard label="Suitability" value={selectedCell.averageHabitatSuitability.toFixed(3)} />
+                <DetailCard label="Health" value={selectedCell.averagePopulationHealth.toFixed(3)} />
                 <DetailCard label="Density" value={selectedCell.animalDensity.toFixed(3)} />
                 <DetailCard label="Herbivore Capacity" value={selectedCell.herbivoreCapacity.toFixed(3)} />
                 <DetailCard label="Prey Availability" value={selectedCell.preyAvailability.toFixed(3)} />
                 <DetailCard label="Predator Capacity" value={selectedCell.predatorCapacity.toFixed(3)} />
                 <DetailCard label="Migration Pressure" value={selectedCell.migrationPressure.toFixed(3)} />
+                <DetailCard label="Selected Species" value={(() => {
+                  const population = getSpeciesPopulation(selectedCell, selectedSpeciesId);
+                  return population ? `${population.speciesName}: ${formatNumber(population.population, 0)} / health ${population.health.toFixed(3)} / suitability ${population.habitatSuitability.toFixed(3)}` : "Absent";
+                })()} />
+                <DetailCard label="Species Present" value={selectedCell.animalPopulations.filter((population) => population.population > 0).slice(0, 8).map((population) => `${population.speciesName} ${formatNumber(population.population, 0)}`).join(", ") || "None"} />
                 <DetailCard label="Danger" value={selectedCell.dangerScore.toFixed(3)} />
                 <DetailCard label="Hunting Value" value={selectedCell.huntingValue.toFixed(3)} />
                 <DetailCard label="Domestication" value={selectedCell.domesticationPotential.toFixed(3)} />

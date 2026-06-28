@@ -19,6 +19,11 @@ import { getPlanetResourcesState, type PlanetResourceSummary } from "../../lib/s
 import { getTerrainState, type TerrainSummary } from "../../lib/simulation/terrain-engine";
 import { getWeatherState, type WeatherSummary } from "../../lib/simulation/weather-engine";
 import {
+  listWorldHealthSummaries,
+  type WorldHealthBadge,
+  type WorldHealthSummary,
+} from "../../lib/simulation/world-health";
+import {
   buildWorldFingerprint,
   CANONICAL_DEFAULT_WORLD_ALIASES,
   FIRST_DAWN_CANONICAL_WORLD,
@@ -239,6 +244,59 @@ function DetailItem({ label, value }: DetailItemProps) {
       <p className="text-[11px] uppercase tracking-[0.2em] text-stone-500">{label}</p>
       <p className="mt-1 text-sm text-stone-100">{value}</p>
     </div>
+  );
+}
+
+function getHealthBadgeClass(badge: WorldHealthBadge): string {
+  if (badge === "Healthy") {
+    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
+  }
+
+  if (badge === "Warning") {
+    return "border-dawn-gold/40 bg-dawn-gold/10 text-dawn-amber";
+  }
+
+  return "border-red-400/40 bg-red-950/30 text-red-100";
+}
+
+function formatHealthList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(", ") : "None";
+}
+
+function WorldHealthPanel({ health }: { health: WorldHealthSummary | null }) {
+  if (!health) {
+    return (
+      <section className="mt-8 rounded border border-white/10 bg-black/20 p-5">
+        <p className="text-[11px] uppercase tracking-[0.24em] text-dawn-gold">World Health</p>
+        <p className="mt-2 text-sm text-stone-300">Health data is unavailable for the selected world.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-8 rounded border border-white/10 bg-black/20 p-5">
+      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-dawn-gold">World Health</p>
+          <h2 className="mt-1 font-display text-2xl text-white">{health.worldName}</h2>
+        </div>
+        <span className={`inline-flex justify-center border px-3 py-1 text-xs font-semibold uppercase tracking-normal ${getHealthBadgeClass(health.badge)}`}>
+          {health.badge}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <DetailItem label="World Status" value={health.status} />
+        <DetailItem label="World.currentTick" value={health.currentTick} />
+        <DetailItem label="Latest SimulationTick.tickNumber" value={health.latestSimulationTickNumber ?? "-"} />
+        <DetailItem label="Last Tick Status" value={health.lastTickStatus} />
+        <DetailItem label="Last Successful Tick Time" value={health.lastSuccessfulTickTime ?? "-"} />
+        <DetailItem label="Failed Systems" value={formatHealthList(health.failedSystems)} />
+        <DetailItem label="Last Error" value={health.lastErrorMessage ?? "-"} />
+        <DetailItem label="Biome Coverage" value={formatPercent(health.biomeCoveragePercent)} />
+        <DetailItem label="Plant Coverage" value={formatPercent(health.plantCoveragePercent)} />
+        <DetailItem label="Weather Snapshot" value={health.weatherSnapshotAvailable ? "Available" : "Missing"} />
+      </div>
+    </section>
   );
 }
 
@@ -867,6 +925,7 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
   let actionLogs: ActionLogRow[] = [];
   let tickHistory: TickHistoryRow[] = [];
   let simulationStates = new Map<string, SimulationState>();
+  let healthSummaries = new Map<string, WorldHealthSummary>();
   let grid: SpatialGrid | null = null;
   let loadError: string | null = null;
 
@@ -902,6 +961,10 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
 
       return snapshots.states;
     });
+
+    healthSummaries = await timer.time("states:health", async () =>
+      listWorldHealthSummaries(worlds.map((world) => world.id)),
+    );
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Unable to load worlds.";
   }
@@ -973,6 +1036,10 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
                 timeState={getTimeState(activeSandboxWorld)}
                 world={activeSandboxWorld}
               />
+            ) : null}
+
+            {activeSandboxWorld ? (
+              <WorldHealthPanel health={healthSummaries.get(activeSandboxWorld.id) ?? null} />
             ) : null}
 
             {activeSandboxWorld && grid ? (

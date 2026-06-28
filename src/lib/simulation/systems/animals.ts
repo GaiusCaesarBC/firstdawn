@@ -28,6 +28,11 @@ export async function run(context: SimulationSystemContext): Promise<SimulationS
     biodiversityScore: result.summary.biodiversityScore,
     civilizationFoodSupportScore: result.summary.civilizationFoodSupportScore,
     dangerMapScore: result.summary.dangerMapScore,
+    animalSpeciesCount: result.summary.animalSpeciesCount,
+    occupiedHabitatPercent: result.summary.occupiedHabitatPercent,
+    totalWildlifePopulation: result.summary.totalWildlifePopulation,
+    averageHabitatSuitability: result.summary.averageHabitatSuitability,
+    averageHealth: result.summary.averageHealth,
     dominantAnimalDistribution: result.summary.dominantAnimalDistribution,
   });
 }

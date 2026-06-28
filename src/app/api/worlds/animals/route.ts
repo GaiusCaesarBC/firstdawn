@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getAnimalEcologyDefinitions,
   getAnimalEcologyState,
+  getAnimalPopulationDefinitions,
 } from "../../../../lib/simulation/animal-engine";
 import { listWorlds } from "../../../../lib/worlds/world-lifecycle";
 
@@ -44,6 +45,7 @@ export async function GET(request: Request) {
     planetId: world.planet?.id ?? null,
     tick: animalState.tick,
     definitions: getAnimalEcologyDefinitions(),
+    speciesDefinitions: getAnimalPopulationDefinitions(),
     summary: animalState.summary,
     cell: selectedCell,
     cells: cellQuery ? [] : animalState.cells,

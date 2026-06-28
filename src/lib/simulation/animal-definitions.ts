@@ -1,5 +1,81 @@
 import type { BiomeKey } from "./biome-definitions";
 
+
+export type AnimalTrophicLevel = "Herbivore" | "Omnivore" | "Carnivore";
+export type AnimalActivityPattern = "Diurnal" | "Nocturnal" | "Crepuscular";
+export type AnimalPreferenceRange = readonly [number, number];
+
+export type AnimalSpeciesDefinition = {
+  readonly id: string;
+  readonly name: string;
+  readonly scientificName: string;
+  readonly trophicLevel: AnimalTrophicLevel;
+  readonly preferredBiomes: readonly BiomeKey[];
+  readonly acceptableTemperatureRange: AnimalPreferenceRange;
+  readonly acceptableRainfallRange: AnimalPreferenceRange;
+  readonly acceptableElevationRange: AnimalPreferenceRange;
+  readonly preferredPlantDensity: AnimalPreferenceRange;
+  readonly reproductionRate: number;
+  readonly naturalMortalityRate: number;
+  readonly migrationThreshold: number;
+  readonly starvationThreshold: number;
+  readonly carryingCapacityModifier: number;
+  readonly bodyMass: number;
+  readonly activityPattern: AnimalActivityPattern;
+  readonly climateTolerance: number;
+  readonly tags: readonly string[];
+};
+
+function defineSpecies(definition: AnimalSpeciesDefinition): AnimalSpeciesDefinition {
+  return Object.freeze(definition);
+}
+
+export const ANIMAL_SPECIES_DEFINITIONS = Object.freeze([
+  defineSpecies({ id: "rabbit", name: "Rabbit", scientificName: "Oryctolagus cuniculus", trophicLevel: "Herbivore", preferredBiomes: ["temperate-grassland", "temperate-forest", "mediterranean-shrubland", "savanna", "tundra"], acceptableTemperatureRange: [-12, 34], acceptableRainfallRange: [0.08, 0.86], acceptableElevationRange: [0.22, 0.9], preferredPlantDensity: [0.18, 0.82], reproductionRate: 0.34, naturalMortalityRate: 0.09, migrationThreshold: 0.42, starvationThreshold: 0.24, carryingCapacityModifier: 1.2, bodyMass: 1.8, activityPattern: "Crepuscular", climateTolerance: 0.62, tags: ["small-game", "burrower", "prey", "fast-reproduction"] }),
+  defineSpecies({ id: "deer", name: "Deer", scientificName: "Cervidae", trophicLevel: "Herbivore", preferredBiomes: ["temperate-forest", "temperate-grassland", "boreal-forest", "tropical-seasonal-forest", "river-wetland"], acceptableTemperatureRange: [-18, 32], acceptableRainfallRange: [0.12, 0.94], acceptableElevationRange: [0.22, 0.88], preferredPlantDensity: [0.24, 0.9], reproductionRate: 0.14, naturalMortalityRate: 0.06, migrationThreshold: 0.46, starvationThreshold: 0.32, carryingCapacityModifier: 0.72, bodyMass: 72, activityPattern: "Crepuscular", climateTolerance: 0.64, tags: ["browser", "game", "prey", "forest-edge"] }),
+  defineSpecies({ id: "bison", name: "Bison", scientificName: "Bison bison", trophicLevel: "Herbivore", preferredBiomes: ["temperate-grassland", "savanna", "tundra"], acceptableTemperatureRange: [-24, 34], acceptableRainfallRange: [0.08, 0.64], acceptableElevationRange: [0.26, 0.78], preferredPlantDensity: [0.26, 0.74], reproductionRate: 0.08, naturalMortalityRate: 0.045, migrationThreshold: 0.5, starvationThreshold: 0.36, carryingCapacityModifier: 0.38, bodyMass: 620, activityPattern: "Diurnal", climateTolerance: 0.72, tags: ["large-grazer", "herd", "migration", "meat"] }),
+  defineSpecies({ id: "elephant", name: "Elephant", scientificName: "Loxodonta africana", trophicLevel: "Herbivore", preferredBiomes: ["savanna", "tropical-seasonal-forest", "tropical-rainforest", "river-wetland"], acceptableTemperatureRange: [10, 40], acceptableRainfallRange: [0.18, 0.92], acceptableElevationRange: [0.18, 0.72], preferredPlantDensity: [0.34, 1], reproductionRate: 0.035, naturalMortalityRate: 0.025, migrationThreshold: 0.48, starvationThreshold: 0.42, carryingCapacityModifier: 0.16, bodyMass: 4200, activityPattern: "Diurnal", climateTolerance: 0.52, tags: ["megafauna", "browser", "water-dependent", "keystone"] }),
+  defineSpecies({ id: "antelope", name: "Antelope", scientificName: "Antilopinae", trophicLevel: "Herbivore", preferredBiomes: ["savanna", "temperate-grassland", "desert", "mediterranean-shrubland"], acceptableTemperatureRange: [0, 42], acceptableRainfallRange: [0.02, 0.68], acceptableElevationRange: [0.22, 0.82], preferredPlantDensity: [0.16, 0.7], reproductionRate: 0.13, naturalMortalityRate: 0.06, migrationThreshold: 0.52, starvationThreshold: 0.3, carryingCapacityModifier: 0.74, bodyMass: 55, activityPattern: "Diurnal", climateTolerance: 0.72, tags: ["grazer", "herd", "prey", "dryland"] }),
+  defineSpecies({ id: "goat", name: "Goat", scientificName: "Capra hircus", trophicLevel: "Herbivore", preferredBiomes: ["alpine-mountain", "badlands-rocky", "mediterranean-shrubland", "temperate-grassland", "desert"], acceptableTemperatureRange: [-10, 38], acceptableRainfallRange: [0.02, 0.76], acceptableElevationRange: [0.32, 1], preferredPlantDensity: [0.08, 0.64], reproductionRate: 0.18, naturalMortalityRate: 0.055, migrationThreshold: 0.46, starvationThreshold: 0.22, carryingCapacityModifier: 0.84, bodyMass: 45, activityPattern: "Diurnal", climateTolerance: 0.78, tags: ["browser", "mountain", "domestication-candidate", "sure-footed"] }),
+  defineSpecies({ id: "yak", name: "Yak", scientificName: "Bos grunniens", trophicLevel: "Herbivore", preferredBiomes: ["alpine-mountain", "tundra", "boreal-forest"], acceptableTemperatureRange: [-32, 12], acceptableRainfallRange: [0.04, 0.72], acceptableElevationRange: [0.46, 1], preferredPlantDensity: [0.12, 0.62], reproductionRate: 0.07, naturalMortalityRate: 0.04, migrationThreshold: 0.5, starvationThreshold: 0.36, carryingCapacityModifier: 0.36, bodyMass: 380, activityPattern: "Diurnal", climateTolerance: 0.82, tags: ["cold-adapted", "large-grazer", "mountain", "domestication-candidate"] }),
+  defineSpecies({ id: "wolf", name: "Wolf", scientificName: "Canis lupus", trophicLevel: "Carnivore", preferredBiomes: ["boreal-forest", "temperate-forest", "temperate-grassland", "tundra", "alpine-mountain"], acceptableTemperatureRange: [-36, 28], acceptableRainfallRange: [0.06, 0.92], acceptableElevationRange: [0.24, 0.92], preferredPlantDensity: [0.08, 0.86], reproductionRate: 0.09, naturalMortalityRate: 0.055, migrationThreshold: 0.54, starvationThreshold: 0.38, carryingCapacityModifier: 0.18, bodyMass: 42, activityPattern: "Crepuscular", climateTolerance: 0.8, tags: ["pack", "predator", "wide-ranging", "prey-control"] }),
+  defineSpecies({ id: "lion", name: "Lion", scientificName: "Panthera leo", trophicLevel: "Carnivore", preferredBiomes: ["savanna", "temperate-grassland", "tropical-seasonal-forest"], acceptableTemperatureRange: [8, 42], acceptableRainfallRange: [0.08, 0.74], acceptableElevationRange: [0.2, 0.76], preferredPlantDensity: [0.08, 0.72], reproductionRate: 0.07, naturalMortalityRate: 0.05, migrationThreshold: 0.46, starvationThreshold: 0.42, carryingCapacityModifier: 0.14, bodyMass: 190, activityPattern: "Nocturnal", climateTolerance: 0.58, tags: ["apex", "pride", "large-predator", "savanna"] }),
+  defineSpecies({ id: "tiger", name: "Tiger", scientificName: "Panthera tigris", trophicLevel: "Carnivore", preferredBiomes: ["tropical-rainforest", "tropical-seasonal-forest", "temperate-forest", "swamp-marsh"], acceptableTemperatureRange: [-6, 38], acceptableRainfallRange: [0.24, 1], acceptableElevationRange: [0.18, 0.82], preferredPlantDensity: [0.34, 1], reproductionRate: 0.065, naturalMortalityRate: 0.05, migrationThreshold: 0.42, starvationThreshold: 0.42, carryingCapacityModifier: 0.12, bodyMass: 220, activityPattern: "Nocturnal", climateTolerance: 0.56, tags: ["apex", "ambush", "forest", "large-predator"] }),
+  defineSpecies({ id: "bear", name: "Bear", scientificName: "Ursidae", trophicLevel: "Omnivore", preferredBiomes: ["boreal-forest", "temperate-forest", "tundra", "river-wetland", "coast"], acceptableTemperatureRange: [-28, 28], acceptableRainfallRange: [0.08, 0.96], acceptableElevationRange: [0.22, 0.9], preferredPlantDensity: [0.24, 0.9], reproductionRate: 0.05, naturalMortalityRate: 0.035, migrationThreshold: 0.44, starvationThreshold: 0.38, carryingCapacityModifier: 0.16, bodyMass: 260, activityPattern: "Crepuscular", climateTolerance: 0.74, tags: ["omnivore", "large-mammal", "fish", "danger"] }),
+  defineSpecies({ id: "fox", name: "Fox", scientificName: "Vulpes vulpes", trophicLevel: "Omnivore", preferredBiomes: ["temperate-forest", "temperate-grassland", "boreal-forest", "tundra", "desert", "mediterranean-shrubland"], acceptableTemperatureRange: [-30, 38], acceptableRainfallRange: [0.02, 0.94], acceptableElevationRange: [0.2, 0.92], preferredPlantDensity: [0.04, 0.82], reproductionRate: 0.17, naturalMortalityRate: 0.075, migrationThreshold: 0.42, starvationThreshold: 0.26, carryingCapacityModifier: 0.54, bodyMass: 6, activityPattern: "Nocturnal", climateTolerance: 0.82, tags: ["small-predator", "omnivore", "burrower", "wide-ranging"] }),
+  defineSpecies({ id: "eagle", name: "Eagle", scientificName: "Aquila chrysaetos", trophicLevel: "Carnivore", preferredBiomes: ["alpine-mountain", "temperate-grassland", "tundra", "coast", "lake", "badlands-rocky"], acceptableTemperatureRange: [-24, 36], acceptableRainfallRange: [0.02, 0.88], acceptableElevationRange: [0.16, 1], preferredPlantDensity: [0.02, 0.78], reproductionRate: 0.045, naturalMortalityRate: 0.035, migrationThreshold: 0.5, starvationThreshold: 0.34, carryingCapacityModifier: 0.1, bodyMass: 5, activityPattern: "Diurnal", climateTolerance: 0.72, tags: ["raptor", "aerial", "predator", "nesting-cliffs"] }),
+  defineSpecies({ id: "pig", name: "Pig", scientificName: "Sus domesticus", trophicLevel: "Omnivore", preferredBiomes: ["temperate-forest", "river-wetland", "swamp-marsh", "tropical-seasonal-forest", "temperate-grassland"], acceptableTemperatureRange: [-4, 34], acceptableRainfallRange: [0.16, 1], acceptableElevationRange: [0.18, 0.78], preferredPlantDensity: [0.22, 0.92], reproductionRate: 0.24, naturalMortalityRate: 0.065, migrationThreshold: 0.4, starvationThreshold: 0.26, carryingCapacityModifier: 0.76, bodyMass: 85, activityPattern: "Diurnal", climateTolerance: 0.56, tags: ["omnivore", "rooter", "domestication-candidate", "wetland-edge"] }),
+  defineSpecies({ id: "boar", name: "Boar", scientificName: "Sus scrofa", trophicLevel: "Omnivore", preferredBiomes: ["temperate-forest", "tropical-seasonal-forest", "swamp-marsh", "mediterranean-shrubland", "river-wetland"], acceptableTemperatureRange: [-8, 38], acceptableRainfallRange: [0.1, 1], acceptableElevationRange: [0.18, 0.82], preferredPlantDensity: [0.2, 0.96], reproductionRate: 0.2, naturalMortalityRate: 0.07, migrationThreshold: 0.42, starvationThreshold: 0.28, carryingCapacityModifier: 0.64, bodyMass: 95, activityPattern: "Nocturnal", climateTolerance: 0.62, tags: ["omnivore", "rooter", "forest", "danger"] }),
+  defineSpecies({ id: "raccoon", name: "Raccoon", scientificName: "Procyon lotor", trophicLevel: "Omnivore", preferredBiomes: ["temperate-forest", "river-wetland", "swamp-marsh", "lake", "coast"], acceptableTemperatureRange: [-16, 34], acceptableRainfallRange: [0.16, 1], acceptableElevationRange: [0.16, 0.8], preferredPlantDensity: [0.24, 0.92], reproductionRate: 0.16, naturalMortalityRate: 0.075, migrationThreshold: 0.4, starvationThreshold: 0.24, carryingCapacityModifier: 0.58, bodyMass: 7, activityPattern: "Nocturnal", climateTolerance: 0.66, tags: ["omnivore", "wetland-edge", "scavenger", "small-mammal"] }),
+  defineSpecies({ id: "crow", name: "Crow", scientificName: "Corvus brachyrhynchos", trophicLevel: "Omnivore", preferredBiomes: ["temperate-forest", "temperate-grassland", "river-wetland", "coast", "savanna", "tundra"], acceptableTemperatureRange: [-24, 38], acceptableRainfallRange: [0.02, 1], acceptableElevationRange: [0.12, 0.92], preferredPlantDensity: [0.02, 0.9], reproductionRate: 0.12, naturalMortalityRate: 0.06, migrationThreshold: 0.46, starvationThreshold: 0.22, carryingCapacityModifier: 0.62, bodyMass: 0.5, activityPattern: "Diurnal", climateTolerance: 0.84, tags: ["bird", "scavenger", "omnivore", "wide-ranging"] }),
+  defineSpecies({ id: "salmon", name: "Salmon", scientificName: "Salmo salar", trophicLevel: "Omnivore", preferredBiomes: ["lake", "river-wetland", "coast"], acceptableTemperatureRange: [-2, 18], acceptableRainfallRange: [0.28, 1], acceptableElevationRange: [0.16, 0.86], preferredPlantDensity: [0.04, 0.82], reproductionRate: 0.28, naturalMortalityRate: 0.11, migrationThreshold: 0.56, starvationThreshold: 0.28, carryingCapacityModifier: 1.12, bodyMass: 4, activityPattern: "Diurnal", climateTolerance: 0.5, tags: ["aquatic", "freshwater", "migration", "fish"] }),
+  defineSpecies({ id: "tuna", name: "Tuna", scientificName: "Thunnini", trophicLevel: "Carnivore", preferredBiomes: ["ocean", "coast"], acceptableTemperatureRange: [6, 32], acceptableRainfallRange: [0, 1], acceptableElevationRange: [0, 0.46], preferredPlantDensity: [0, 0.5], reproductionRate: 0.2, naturalMortalityRate: 0.08, migrationThreshold: 0.58, starvationThreshold: 0.34, carryingCapacityModifier: 0.94, bodyMass: 120, activityPattern: "Diurnal", climateTolerance: 0.56, tags: ["aquatic", "marine", "fish", "pelagic"] }),
+  defineSpecies({ id: "shark", name: "Shark", scientificName: "Selachimorpha", trophicLevel: "Carnivore", preferredBiomes: ["ocean", "coast"], acceptableTemperatureRange: [4, 34], acceptableRainfallRange: [0, 1], acceptableElevationRange: [0, 0.46], preferredPlantDensity: [0, 0.58], reproductionRate: 0.04, naturalMortalityRate: 0.025, migrationThreshold: 0.5, starvationThreshold: 0.42, carryingCapacityModifier: 0.12, bodyMass: 520, activityPattern: "Crepuscular", climateTolerance: 0.62, tags: ["aquatic", "marine", "apex", "danger"] }),
+  defineSpecies({ id: "seal", name: "Seal", scientificName: "Phocidae", trophicLevel: "Carnivore", preferredBiomes: ["coast", "ice-sheet", "tundra", "ocean"], acceptableTemperatureRange: [-34, 12], acceptableRainfallRange: [0, 0.82], acceptableElevationRange: [0, 0.62], preferredPlantDensity: [0, 0.46], reproductionRate: 0.08, naturalMortalityRate: 0.045, migrationThreshold: 0.5, starvationThreshold: 0.36, carryingCapacityModifier: 0.32, bodyMass: 140, activityPattern: "Diurnal", climateTolerance: 0.82, tags: ["polar", "marine", "fish-eater", "coastal"] }),
+  defineSpecies({ id: "polar-bear", name: "Polar Bear", scientificName: "Ursus maritimus", trophicLevel: "Carnivore", preferredBiomes: ["ice-sheet", "tundra", "coast", "ocean"], acceptableTemperatureRange: [-40, 6], acceptableRainfallRange: [0, 0.62], acceptableElevationRange: [0, 0.74], preferredPlantDensity: [0, 0.38], reproductionRate: 0.035, naturalMortalityRate: 0.03, migrationThreshold: 0.52, starvationThreshold: 0.46, carryingCapacityModifier: 0.08, bodyMass: 450, activityPattern: "Diurnal", climateTolerance: 0.88, tags: ["polar", "apex", "marine-edge", "danger"] }),
+  defineSpecies({ id: "camel", name: "Camel", scientificName: "Camelus dromedarius", trophicLevel: "Herbivore", preferredBiomes: ["desert", "badlands-rocky", "mediterranean-shrubland", "savanna"], acceptableTemperatureRange: [0, 46], acceptableRainfallRange: [0, 0.36], acceptableElevationRange: [0.2, 0.82], preferredPlantDensity: [0.04, 0.42], reproductionRate: 0.07, naturalMortalityRate: 0.04, migrationThreshold: 0.48, starvationThreshold: 0.24, carryingCapacityModifier: 0.34, bodyMass: 480, activityPattern: "Diurnal", climateTolerance: 0.9, tags: ["desert", "water-efficient", "large-herbivore", "domestication-candidate"] }),
+] satisfies readonly AnimalSpeciesDefinition[]);
+
+export type AnimalSpeciesId = (typeof ANIMAL_SPECIES_DEFINITIONS)[number]["id"];
+
+export const ANIMAL_SPECIES_BY_ID: Readonly<Record<string, AnimalSpeciesDefinition>> = Object.freeze(
+  Object.fromEntries(ANIMAL_SPECIES_DEFINITIONS.map((definition) => [definition.id, definition])),
+);
+
+export function getAnimalSpeciesDefinition(id: string): AnimalSpeciesDefinition {
+  const definition = ANIMAL_SPECIES_BY_ID[id];
+
+  if (!definition) {
+    throw new Error(`Unknown animal species: ${id}`);
+  }
+
+  return definition;
+}
+
+export function getAnimalSpeciesDefinitions(): readonly AnimalSpeciesDefinition[] {
+  return ANIMAL_SPECIES_DEFINITIONS;
+}
+
 export const ANIMAL_GUILD_KEYS = [
   "aquatic-microfauna",
   "fish",

@@ -1,6 +1,7 @@
 import { Prisma, type World } from "@prisma/client";
 
 import type { BiomeKey } from "./biome-definitions";
+import { getCachedDeterministic } from "./deterministic-cache";
 import { createGrid, type SpatialGrid } from "./grid/grid";
 import { getPlantEcologyStateAtTick, type PlantGridCell } from "./plant-engine";
 import { getTerrainState, type TerrainGridCell } from "./terrain-engine";
@@ -9,11 +10,27 @@ import {
   ANIMAL_GUILD_KEYS,
   getAnimalGuildDefinition,
   getAnimalGuildDefinitions,
+  getAnimalSpeciesDefinitions,
   type AnimalGuildDefinition,
   type AnimalGuildKey,
+  type AnimalSpeciesDefinition,
 } from "./animal-definitions";
 
 export type DominantAnimalGuildKey = AnimalGuildKey;
+
+export type AnimalPopulationState = {
+  readonly speciesId: string;
+  readonly speciesName: string;
+  readonly scientificName: string;
+  readonly trophicLevel: AnimalSpeciesDefinition["trophicLevel"];
+  readonly population: number;
+  readonly health: number;
+  readonly foodAvailability: number;
+  readonly migrationPressure: number;
+  readonly habitatSuitability: number;
+  readonly carryingCapacity: number;
+  readonly lastUpdatedTick: string;
+};
 
 export type AnimalGridCell = PlantGridCell & {
   readonly animalSuitabilityScore: number;
@@ -32,6 +49,13 @@ export type AnimalGridCell = PlantGridCell & {
   readonly animalBiodiversityScore: number;
   readonly carryingCapacityScore: number;
   readonly animalTags: readonly string[];
+  readonly dominantSpeciesId: string;
+  readonly dominantSpeciesName: string;
+  readonly speciesCount: number;
+  readonly totalWildlifePopulation: number;
+  readonly averagePopulationHealth: number;
+  readonly averageHabitatSuitability: number;
+  readonly animalPopulations: readonly AnimalPopulationState[];
 };
 
 export type AnimalDistribution = Record<DominantAnimalGuildKey, number>;
@@ -64,6 +88,11 @@ export type AnimalSummary = {
   readonly biodiversityScore: number;
   readonly civilizationFoodSupportScore: number;
   readonly dangerMapScore: number;
+  readonly animalSpeciesCount: number;
+  readonly occupiedHabitatPercent: number;
+  readonly totalWildlifePopulation: number;
+  readonly averageHabitatSuitability: number;
+  readonly averageHealth: number;
   readonly herbivoreRichRegions: readonly AnimalRegion[];
   readonly predatorHotspots: readonly AnimalRegion[];
   readonly huntingValueRegions: readonly AnimalRegion[];
@@ -112,7 +141,28 @@ type AnimalWorldSource = Pick<
   } | null;
 };
 
-type AnimalPersistenceClient = Pick<Prisma.TransactionClient, "planet" | "planetCell">;
+type AnimalPopulationPersistencePayload = {
+  readonly planetCellId: string;
+  readonly speciesId: string;
+  readonly population: number;
+  readonly health: number;
+  readonly foodAvailability: number;
+  readonly migrationPressure: number;
+  readonly habitatSuitability: number;
+  readonly carryingCapacity: number;
+  readonly lastUpdatedTick: bigint;
+};
+
+type AnimalPopulationPersistenceDelegate = {
+  deleteMany(input: { where: { planetCellId: { in: string[] } } }): Promise<unknown>;
+  createMany(input: { data: readonly AnimalPopulationPersistencePayload[]; skipDuplicates?: boolean }): Promise<unknown>;
+};
+
+type AnimalPersistenceClient = Pick<Prisma.TransactionClient, "planet" | "planetCell"> & {
+  animalPopulation?: AnimalPopulationPersistenceDelegate;
+  $executeRaw?: Prisma.TransactionClient["$executeRaw"];
+  $queryRaw?: Prisma.TransactionClient["$queryRaw"];
+};
 
 type AnimalCandidate = {
   readonly definition: AnimalGuildDefinition;
@@ -130,6 +180,16 @@ type AnimalCellInputs = {
   readonly plant: PlantGridCell;
   readonly terrain: TerrainGridCell;
   readonly seed: string;
+  readonly tick: bigint;
+};
+
+type PersistedAnimalCellExtras = {
+  readonly dominantSpeciesId?: string;
+  readonly dominantSpeciesName?: string;
+  readonly animalSpeciesCount?: number;
+  readonly totalWildlifePopulation?: number;
+  readonly averageAnimalHealth?: number;
+  readonly averageHabitatSuitability?: number;
 };
 
 const UINT32_RANGE = 4_294_967_296;
@@ -620,8 +680,189 @@ function buildAnimalTags(
   return Object.freeze([...tags].sort());
 }
 
+
+function speciesBiomeScore(definition: AnimalSpeciesDefinition, cell: PlantGridCell): number {
+  if (definition.preferredBiomes.includes(cell.biomeKey)) {
+    return 1;
+  }
+
+  if (definition.tags.includes("aquatic") && ["marine", "freshwater", "wetland"].includes(cell.biomeCategory)) {
+    return 0.56;
+  }
+
+  if (definition.trophicLevel === "Herbivore" && includesAny(cell.biomeTags, ["grass", "forest", "shrub", "fertile"])) {
+    return 0.44;
+  }
+
+  if (definition.trophicLevel === "Carnivore" && !isWaterBiome(cell) && cell.biomeKey !== "volcanic-barren") {
+    return 0.34;
+  }
+
+  if (definition.tags.includes("polar") && cell.adjustedTemperatureC <= 6) {
+    return 0.44;
+  }
+
+  if (definition.tags.includes("desert") && (cell.precipitationScore <= 0.22 || includesAny(cell.biomeTags, ["arid", "dry"]))) {
+    return 0.48;
+  }
+
+  return 0.04;
+}
+
+function plantDensityFit(cell: PlantGridCell, definition: AnimalSpeciesDefinition): number {
+  if (definition.trophicLevel === "Carnivore" && definition.tags.includes("aquatic")) {
+    return 1;
+  }
+
+  return rangeFit(cell.plantDensity, definition.preferredPlantDensity, 0.28);
+}
+
+function speciesFoodAvailability(
+  definition: AnimalSpeciesDefinition,
+  cell: PlantGridCell,
+  values: { readonly herbivores: number; readonly prey: number },
+): number {
+  if (definition.tags.includes("aquatic")) {
+    return round(clamp(aquaticFoodBase(cell) * 0.56 + values.prey * 0.24 + waterBodySupport(cell) * 0.2));
+  }
+
+  switch (definition.trophicLevel) {
+    case "Herbivore":
+      return round(clamp(plantFoodBase(cell) * 0.56 + cell.ediblePlantScore * 0.24 + cell.waterAvailabilityScore * 0.14 + cell.regrowthRate * 0.06));
+    case "Carnivore":
+      return round(clamp(values.prey * 0.68 + values.herbivores * 0.18 + aquaticFoodBase(cell) * 0.12));
+    case "Omnivore":
+      return round(clamp(plantFoodBase(cell) * 0.34 + values.prey * 0.28 + aquaticFoodBase(cell) * 0.16 + cell.biodiversityScore * 0.12 + cell.waterAvailabilityScore * 0.1));
+  }
+}
+
+export function scoreAnimalSpeciesHabitat(
+  definition: AnimalSpeciesDefinition,
+  cell: PlantGridCell,
+  values: { readonly herbivores: number; readonly prey: number },
+): number {
+  const biome = speciesBiomeScore(definition, cell);
+  const temperature = rangeFit(cell.adjustedTemperatureC, definition.acceptableTemperatureRange, 16 + definition.climateTolerance * 18);
+  const rainfall = rangeFit(cell.precipitationScore, definition.acceptableRainfallRange, 0.24 + definition.climateTolerance * 0.18);
+  const elevation = rangeFit(cell.elevation, definition.acceptableElevationRange, 0.18 + definition.climateTolerance * 0.08);
+  const plants = plantDensityFit(cell, definition);
+  const food = speciesFoodAvailability(definition, cell, values);
+  const water = definition.tags.includes("water-efficient")
+    ? 1
+    : requirementFit(Math.max(cell.waterAvailabilityScore, waterBodySupport(cell)), definition.tags.includes("aquatic") ? 0.86 : 0.18);
+  const climateBuffer = definition.climateTolerance * 0.05;
+  const marineMismatch = definition.tags.includes("aquatic") || !isWaterBiome(cell) || cell.biomeKey === "coast" ? 0 : 0.72;
+  const landMismatch = definition.tags.includes("aquatic") && !isWaterBiome(cell) && cell.biomeCategory !== "wetland" ? 0.68 : 0;
+
+  return round(clamp(
+    biome * 0.28
+      + temperature * 0.16
+      + rainfall * 0.1
+      + elevation * 0.08
+      + plants * 0.12
+      + food * 0.16
+      + water * 0.08
+      + climateBuffer
+      - marineMismatch
+      - landMismatch,
+  ));
+}
+
+function speciesCarryingCapacity(definition: AnimalSpeciesDefinition, suitability: number, food: number, carrying: number): number {
+  if (suitability < 0.1 || food < 0.08) {
+    return 0;
+  }
+
+  const massScaler = clamp(9 / Math.sqrt(Math.max(definition.bodyMass, 0.2)), 0.08, 5.2);
+  const waterMultiplier = definition.tags.includes("aquatic") ? 1.45 : 1;
+  const base = 540 * definition.carryingCapacityModifier * massScaler * waterMultiplier;
+
+  return Math.max(0, Math.round(base * suitability * (food * 0.58 + carrying * 0.42)));
+}
+
+function seasonalBirthModifier(cell: PlantGridCell): number {
+  const mildTemperature = clamp(1 - Math.abs(cell.adjustedTemperatureC - 15) / 24);
+  const springLikeMoisture = clamp(cell.precipitationScore * 0.44 + cell.regrowthRate * 0.34 + (1 - cell.seasonalStressScore) * 0.22);
+  const winterStress = cell.adjustedTemperatureC <= 0 ? clamp(Math.abs(cell.adjustedTemperatureC) / 28) : 0;
+
+  return round(clamp(0.68 + mildTemperature * 0.24 + springLikeMoisture * 0.22 - winterStress * 0.34, 0.24, 1.32));
+}
+
+function speciesHealth(definition: AnimalSpeciesDefinition, suitability: number, food: number, cell: PlantGridCell): number {
+  const starvation = food < definition.starvationThreshold ? (definition.starvationThreshold - food) / Math.max(definition.starvationThreshold, 0.01) : 0;
+  const seasonalPenalty = cell.seasonalStressScore * (definition.climateTolerance >= 0.8 ? 0.1 : 0.22);
+
+  return round(clamp(suitability * 0.42 + food * 0.34 + (1 - seasonalPenalty) * 0.18 + definition.climateTolerance * 0.06 - starvation * 0.34));
+}
+
+function logisticPopulation(initialPopulation: number, capacity: number, growthRate: number, tick: bigint): number {
+  if (capacity <= 0 || initialPopulation <= 0 || growthRate <= 0) {
+    return 0;
+  }
+
+  const elapsedTicks = Number(tick > 0n ? tick : 0n);
+  const elapsedGenerations = Math.min(elapsedTicks / 18, 240);
+  const ratio = (capacity - initialPopulation) / initialPopulation;
+  const population = capacity / (1 + ratio * Math.exp(-growthRate * elapsedGenerations));
+
+  return Math.max(0, Math.min(capacity, Math.round(population)));
+}
+
+function speciesMigrationPressure(definition: AnimalSpeciesDefinition, health: number, food: number, suitability: number, cell: PlantGridCell): number {
+  const scarcity = clamp(definition.starvationThreshold - food, 0, 1);
+  const crowding = suitability < definition.migrationThreshold ? definition.migrationThreshold - suitability : 0;
+
+  return round(clamp(scarcity * 0.34 + crowding * 0.28 + cell.seasonalStressScore * 0.22 + (1 - health) * 0.16));
+}
+
+function buildAnimalPopulations(
+  cell: PlantGridCell,
+  values: { readonly herbivores: number; readonly prey: number; readonly carrying: number },
+  seed: string,
+  tick: bigint,
+): readonly AnimalPopulationState[] {
+  const populations = getAnimalSpeciesDefinitions().map((definition) => {
+    const habitatSuitability = scoreAnimalSpeciesHabitat(definition, cell, values);
+    const foodAvailability = speciesFoodAvailability(definition, cell, values);
+    const carryingCapacity = speciesCarryingCapacity(definition, habitatSuitability, foodAvailability, values.carrying);
+    const birthModifier = seasonalBirthModifier(cell);
+    const starvationPenalty = foodAvailability < definition.starvationThreshold ? 0.58 : 1;
+    const netGrowth = Math.max(0, definition.reproductionRate * birthModifier * habitatSuitability * starvationPenalty - definition.naturalMortalityRate * (1 - habitatSuitability));
+    const seededInitial = carryingCapacity * (0.05 + hashUnit(seed, `${cell.id}:${definition.id}:initial-population`) * 0.18) * habitatSuitability;
+    const population = logisticPopulation(Math.max(1, seededInitial), carryingCapacity, netGrowth, tick);
+    const health = population > 0 ? speciesHealth(definition, habitatSuitability, foodAvailability, cell) : 0;
+    const migrationPressure = population > 0 ? speciesMigrationPressure(definition, health, foodAvailability, habitatSuitability, cell) : 0;
+
+    return Object.freeze({
+      speciesId: definition.id,
+      speciesName: definition.name,
+      scientificName: definition.scientificName,
+      trophicLevel: definition.trophicLevel,
+      population,
+      health,
+      foodAvailability,
+      migrationPressure,
+      habitatSuitability,
+      carryingCapacity,
+      lastUpdatedTick: tick.toString(),
+    });
+  }).filter((population) => population.population > 0 || population.habitatSuitability >= 0.22);
+
+  return Object.freeze(populations.sort((left, right) =>
+    right.population - left.population
+      || right.habitatSuitability - left.habitatSuitability
+      || left.speciesId.localeCompare(right.speciesId),
+  ));
+}
+
+function averagePopulationMetric(populations: readonly AnimalPopulationState[], metric: (population: AnimalPopulationState) => number): number {
+  const present = populations.filter((population) => population.population > 0);
+
+  return round(average((present.length > 0 ? present : populations).map(metric)));
+}
+
 function buildAnimalCell(inputs: AnimalCellInputs): AnimalGridCell {
-  const { plant, terrain, seed } = inputs;
+  const { plant, terrain, seed, tick } = inputs;
   const shelter = shelterAvailability(plant, terrain);
   const herbivores = herbivoreCapacity(plant);
   const prey = preyAvailability(plant, herbivores);
@@ -636,6 +877,10 @@ function buildAnimalCell(inputs: AnimalCellInputs): AnimalGridCell {
   const hunting = getHuntingValue(candidate.definition, density, herbivores, prey, plant);
   const domestication = getDomesticationPotential(candidate.definition, density, herbivores, plant);
   const biodiversity = getAnimalBiodiversity(candidate.definition, density, prey, carrying, plant);
+  const animalPopulations = buildAnimalPopulations(plant, { herbivores, prey, carrying }, seed, tick);
+  const dominantPopulation = animalPopulations.find((population) => population.population > 0) ?? animalPopulations[0] ?? null;
+  const presentPopulations = animalPopulations.filter((population) => population.population > 0);
+  const totalWildlifePopulation = presentPopulations.reduce((total, population) => total + population.population, 0);
 
   return Object.freeze({
     ...plant,
@@ -654,6 +899,13 @@ function buildAnimalCell(inputs: AnimalCellInputs): AnimalGridCell {
     domesticationPotential: domestication,
     animalBiodiversityScore: biodiversity,
     carryingCapacityScore: carrying,
+    dominantSpeciesId: dominantPopulation?.speciesId ?? "none",
+    dominantSpeciesName: dominantPopulation?.speciesName ?? "No Established Wildlife",
+    speciesCount: presentPopulations.length,
+    totalWildlifePopulation,
+    averagePopulationHealth: averagePopulationMetric(animalPopulations, (population) => population.health),
+    averageHabitatSuitability: averagePopulationMetric(animalPopulations, (population) => population.habitatSuitability),
+    animalPopulations,
     animalTags: buildAnimalTags(candidate.definition, plant, {
       density,
       herbivores,
@@ -801,6 +1053,10 @@ function buildAnimalSummary(cells: readonly AnimalGridCell[], grid: SpatialGrid)
 
   const eligibleCells = cells.filter(isAnimalEligibleCell);
   const populatedCells = cells.filter((cell) => cell.animalDensity > 0.04);
+  const occupiedCells = cells.filter((cell) => cell.totalWildlifePopulation > 0);
+  const speciesPresent = new Set(cells.flatMap((cell) => cell.animalPopulations.filter((population) => population.population > 0).map((population) => population.speciesId)));
+  const presentPopulations = cells.flatMap((cell) => cell.animalPopulations.filter((population) => population.population > 0));
+  const totalWildlifePopulation = cells.reduce((total, cell) => total + cell.totalWildlifePopulation, 0);
 
   return Object.freeze({
     cellCount: cells.length,
@@ -819,6 +1075,11 @@ function buildAnimalSummary(cells: readonly AnimalGridCell[], grid: SpatialGrid)
     biodiversityScore: round(average(eligibleCells.map((cell) => cell.animalBiodiversityScore))),
     civilizationFoodSupportScore: getCivilizationFoodSupportScore(cells),
     dangerMapScore: getDangerMapScore(cells),
+    animalSpeciesCount: speciesPresent.size,
+    occupiedHabitatPercent: round(occupiedCells.length / Math.max(cells.length, 1), 4),
+    totalWildlifePopulation,
+    averageHabitatSuitability: round(average(presentPopulations.map((population) => population.habitatSuitability))),
+    averageHealth: round(average(presentPopulations.map((population) => population.health))),
     herbivoreRichRegions: getHerbivoreRichRegions(cells, grid),
     predatorHotspots: getPredatorHotspots(cells, grid),
     huntingValueRegions: getHuntingValueRegions(cells, grid),
@@ -834,27 +1095,30 @@ export function getAnimalEcologyStateAtTick(
   tickInput: TickInput,
   grid: SpatialGrid = createGrid(),
 ): AnimalEcologyState {
-  const seed = requireAnimalSeed(world);
   const tick = normalizeTick(tickInput);
-  const plantState = getPlantEcologyStateAtTick(world, tick, grid);
-  const terrainState = getTerrainState(world, grid);
-  const terrainById = new Map(terrainState.cells.map((cell) => [cell.id, cell]));
-  const cells = Object.freeze(plantState.cells.map((plant) => {
-    const terrain = terrainById.get(plant.id);
 
-    if (!terrain) {
-      throw new Error(`Animal ecology dependencies missing for cell: ${plant.id}`);
-    }
+  return getCachedDeterministic("animal-state", world, grid, () => {
+    const seed = requireAnimalSeed(world);
+    const plantState = getPlantEcologyStateAtTick(world, tick, grid);
+    const terrainState = getTerrainState(world, grid);
+    const terrainById = new Map(terrainState.cells.map((cell) => [cell.id, cell]));
+    const cells = Object.freeze(plantState.cells.map((plant) => {
+      const terrain = terrainById.get(plant.id);
 
-    return buildAnimalCell({ plant, terrain, seed });
-  }));
+      if (!terrain) {
+        throw new Error(`Animal ecology dependencies missing for cell: ${plant.id}`);
+      }
 
-  return Object.freeze({
-    seed,
-    tick: tick.toString(),
-    cells,
-    summary: buildAnimalSummary(cells, grid),
-  });
+      return buildAnimalCell({ plant, terrain, seed, tick });
+    }));
+
+    return Object.freeze({
+      seed,
+      tick: tick.toString(),
+      cells,
+      summary: buildAnimalSummary(cells, grid),
+    });
+  }, tick.toString());
 }
 
 export function getAnimalEcologyState(world: AnimalWorldSource, grid: SpatialGrid = createGrid()): AnimalEcologyState {
@@ -867,6 +1131,10 @@ export function getAnimalEcologySummary(world: AnimalWorldSource, grid: SpatialG
 
 export function getAnimalEcologyDefinitions(): readonly AnimalGuildDefinition[] {
   return getAnimalGuildDefinitions();
+}
+
+export function getAnimalPopulationDefinitions(): readonly AnimalSpeciesDefinition[] {
+  return getAnimalSpeciesDefinitions();
 }
 
 function animalCellPersistencePayload(cell: AnimalGridCell): {
@@ -883,6 +1151,12 @@ function animalCellPersistencePayload(cell: AnimalGridCell): {
   domesticationPotential: number;
   animalBiodiversityScore: number;
   carryingCapacityScore: number;
+  dominantSpeciesId: string;
+  dominantSpeciesName: string;
+  animalSpeciesCount: number;
+  totalWildlifePopulation: number;
+  averageAnimalHealth: number;
+  averageHabitatSuitability: number;
   animalTags: Prisma.InputJsonValue;
 } {
   return {
@@ -899,6 +1173,12 @@ function animalCellPersistencePayload(cell: AnimalGridCell): {
     domesticationPotential: cell.domesticationPotential,
     animalBiodiversityScore: cell.animalBiodiversityScore,
     carryingCapacityScore: cell.carryingCapacityScore,
+    dominantSpeciesId: cell.dominantSpeciesId,
+    dominantSpeciesName: cell.dominantSpeciesName,
+    animalSpeciesCount: cell.speciesCount,
+    totalWildlifePopulation: cell.totalWildlifePopulation,
+    averageAnimalHealth: cell.averagePopulationHealth,
+    averageHabitatSuitability: cell.averageHabitatSuitability,
     animalTags: [...cell.animalTags],
   };
 }
@@ -907,6 +1187,8 @@ function samePersistedAnimalCell(
   existing: Awaited<ReturnType<AnimalPersistenceClient["planetCell"]["findMany"]>>[number],
   payload: ReturnType<typeof animalCellPersistencePayload>,
 ): boolean {
+  const animalExisting = existing as typeof existing & PersistedAnimalCellExtras;
+
   return existing.animalGeneratedAt !== null
     && existing.animalUpdatedAt !== null
     && existing.dominantAnimalGuildKey === payload.dominantAnimalGuildKey
@@ -922,7 +1204,80 @@ function samePersistedAnimalCell(
     && existing.domesticationPotential === payload.domesticationPotential
     && existing.animalBiodiversityScore === payload.animalBiodiversityScore
     && existing.carryingCapacityScore === payload.carryingCapacityScore
+    && animalExisting.dominantSpeciesId === payload.dominantSpeciesId
+    && animalExisting.dominantSpeciesName === payload.dominantSpeciesName
+    && animalExisting.animalSpeciesCount === payload.animalSpeciesCount
+    && animalExisting.totalWildlifePopulation === payload.totalWildlifePopulation
+    && animalExisting.averageAnimalHealth === payload.averageAnimalHealth
+    && animalExisting.averageHabitatSuitability === payload.averageHabitatSuitability
     && JSON.stringify(existing.animalTags) === JSON.stringify(payload.animalTags);
+}
+
+
+function splitAnimalCellPersistencePayload(payload: ReturnType<typeof animalCellPersistencePayload>) {
+  const {
+    dominantSpeciesId,
+    dominantSpeciesName,
+    animalSpeciesCount,
+    totalWildlifePopulation,
+    averageAnimalHealth,
+    averageHabitatSuitability,
+    ...planetCellPayload
+  } = payload;
+
+  return {
+    planetCellPayload,
+    speciesPayload: {
+      dominantSpeciesId,
+      dominantSpeciesName,
+      animalSpeciesCount,
+      totalWildlifePopulation,
+      averageAnimalHealth,
+      averageHabitatSuitability,
+    },
+  };
+}
+
+type SchemaColumnProbe = { exists: boolean };
+
+async function supportsAnimalSpeciesAggregateColumns(client: AnimalPersistenceClient): Promise<boolean> {
+  if (!client.$queryRaw) {
+    return false;
+  }
+
+  const rows = await client.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'dominantSpeciesId'
+    ) AS exists
+  `;
+
+  return Boolean(rows[0]?.exists);
+}
+
+async function persistAnimalCellSpeciesAggregates(
+  client: AnimalPersistenceClient,
+  planetCellId: string,
+  payload: ReturnType<typeof splitAnimalCellPersistencePayload>["speciesPayload"],
+  supportsSpeciesAggregates: boolean,
+): Promise<void> {
+  if (!client.$executeRaw || !supportsSpeciesAggregates) {
+    return;
+  }
+
+  await client.$executeRaw`
+    UPDATE "PlanetCell"
+    SET
+      "dominantSpeciesId" = ${payload.dominantSpeciesId},
+      "dominantSpeciesName" = ${payload.dominantSpeciesName},
+      "animalSpeciesCount" = ${payload.animalSpeciesCount},
+      "totalWildlifePopulation" = ${payload.totalWildlifePopulation},
+      "averageAnimalHealth" = ${payload.averageAnimalHealth},
+      "averageHabitatSuitability" = ${payload.averageHabitatSuitability}
+    WHERE "id" = ${planetCellId}
+  `;
 }
 
 export async function persistAnimalEcologyState(
@@ -956,6 +1311,8 @@ export async function persistAnimalEcologyState(
   let updatedCells = 0;
   let unchangedCells = 0;
   const now = new Date();
+  const supportsSpeciesAggregates = await supportsAnimalSpeciesAggregateColumns(client);
+  const populationRows: AnimalPopulationPersistencePayload[] = [];
 
   for (const cell of state.cells) {
     const payload = animalCellPersistencePayload(cell);
@@ -965,20 +1322,50 @@ export async function persistAnimalEcologyState(
       continue;
     }
 
+    for (const population of cell.animalPopulations.filter((entry) => entry.population > 0)) {
+      populationRows.push({
+        planetCellId: existing.id,
+        speciesId: population.speciesId,
+        population: population.population,
+        health: population.health,
+        foodAvailability: population.foodAvailability,
+        migrationPressure: population.migrationPressure,
+        habitatSuitability: population.habitatSuitability,
+        carryingCapacity: population.carryingCapacity,
+        lastUpdatedTick: normalizeTick(population.lastUpdatedTick),
+      });
+    }
+
     if (samePersistedAnimalCell(existing, payload)) {
       unchangedCells += 1;
       continue;
     }
 
+    const { planetCellPayload, speciesPayload } = splitAnimalCellPersistencePayload(payload);
+
     await client.planetCell.update({
       where: { planetId_cellId: { planetId: planet.id, cellId: cell.id } },
       data: {
-        ...payload,
+        ...planetCellPayload,
         animalGeneratedAt: existing.animalGeneratedAt ?? now,
         animalUpdatedAt: now,
       },
     });
+    await persistAnimalCellSpeciesAggregates(client, existing.id, speciesPayload, supportsSpeciesAggregates);
     updatedCells += 1;
+  }
+
+  if (client.animalPopulation) {
+    await client.animalPopulation.deleteMany({
+      where: { planetCellId: { in: existingCells.map((cell) => cell.id) } },
+    });
+
+    if (populationRows.length > 0) {
+      await client.animalPopulation.createMany({
+        data: populationRows,
+        skipDuplicates: true,
+      });
+    }
   }
 
   return Object.freeze({

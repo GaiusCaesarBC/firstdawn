@@ -155,10 +155,18 @@ model PlanetCell {
   animalBiodiversityScore Float @default(0)
   carryingCapacityScore Float @default(0)
   animalTags        Json     @default("[]")
+  dominantSpeciesId String   @default("none")
+  dominantSpeciesName String @default("No Established Wildlife")
+  animalSpeciesCount Int     @default(0)
+  totalWildlifePopulation Float @default(0)
+  averageAnimalHealth Float  @default(0)
+  averageHabitatSuitability Float @default(0)
   animalGeneratedAt DateTime?
   animalUpdatedAt   DateTime?
   generatedAt       DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  animalPopulations AnimalPopulation[]
 
   @@unique([planetId, cellId])
   @@index([planetId])
@@ -166,7 +174,28 @@ model PlanetCell {
   @@index([planetId, biomeCategory])
   @@index([planetId, dominantPlantKey])
   @@index([planetId, dominantAnimalGuildKey])
+  @@index([planetId, dominantSpeciesId])
   @@index([row, column])
+}
+
+model AnimalPopulation {
+  id                 String     @id @default(cuid())
+  planetCellId       String
+  planetCell         PlanetCell @relation(fields: [planetCellId], references: [id], onDelete: Cascade)
+  speciesId          String
+  population         Float      @default(0)
+  health             Float      @default(0)
+  foodAvailability   Float      @default(0)
+  migrationPressure  Float      @default(0)
+  habitatSuitability Float      @default(0)
+  carryingCapacity   Float      @default(0)
+  lastUpdatedTick    BigInt
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([planetCellId, speciesId])
+  @@index([speciesId])
+  @@index([lastUpdatedTick])
 }
 
 model SimulationTick {

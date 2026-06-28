@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getAnimalEcologyDefinitions, getAnimalEcologyState } from "../../../lib/simulation/animal-engine";
+import { getAnimalEcologyDefinitions, getAnimalEcologyState, getAnimalPopulationDefinitions } from "../../../lib/simulation/animal-engine";
 import { createGrid } from "../../../lib/simulation/grid/grid";
 import { getPlanetState } from "../../../lib/simulation/planet-engine";
 import { listWorlds } from "../../../lib/worlds/world-lifecycle";
@@ -52,6 +52,7 @@ export default async function WorldsAnimalsPage() {
           <AnimalMapClient
             cells={animalState.cells}
             definitions={getAnimalEcologyDefinitions()}
+            speciesDefinitions={getAnimalPopulationDefinitions()}
             gridLabel={`${gridSummary.latitudeDivisions} x ${gridSummary.longitudeDivisions}`}
             planetName={planet.name}
             seed={activeWorld.seed ?? ""}

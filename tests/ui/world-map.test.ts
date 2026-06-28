@@ -275,7 +275,8 @@ describe("world map atlas ui", () => {
     expect(panel.textContent).toContain("Vegetation");
     expect(panel.textContent).toContain("Average suitability");
     expect(panel.textContent).toContain("Average seasonal stress");
-    expect(panel.textContent).toContain("Animal Ecology Not Generated Yet");
+    expect(panel.textContent).toContain("Animals");
+    expect(panel.textContent).toContain("Total population");
     expect(panel.textContent).toContain("Civilization Systems Not Generated Yet");
     expect(panel.textContent).not.toContain("Reserved atlas slot");
 
