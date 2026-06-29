@@ -23,7 +23,25 @@ export type WorldHealthSummary = {
   totalWildlifePopulation: number;
   averageAnimalHabitatSuitability: number;
   averageAnimalHealth: number;
+  averageEcosystemHealth: number;
+  averageBiodiversity: number;
+  migrationActivity: number;
+  foodStability: number;
+  predatorBalance: number;
+  collapsedHabitats: number;
+  populationGrowthRate: number;
+  plantConsumptionRate: number;
+  averageFitness: number;
+  averageAdaptationDiversity: number;
+  highestAdaptedPopulation: string | null;
+  lowestFitnessPopulation: string | null;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
   weatherSnapshotAvailable: boolean;
+  systemHealthStatus: WorldHealthBadge | null;
+  systemHealthDiagnostics: string[];
   badge: WorldHealthBadge;
 };
 
@@ -33,6 +51,7 @@ type PipelineEntry = {
   success?: unknown;
   error?: unknown;
   metadata?: unknown;
+  health?: unknown;
 };
 
 export type WorldHealthInput = {
@@ -56,6 +75,22 @@ export type WorldHealthInput = {
   totalWildlifePopulation: number;
   averageAnimalHabitatSuitability: number;
   averageAnimalHealth: number;
+  averageEcosystemHealth: number;
+  averageBiodiversity: number;
+  migrationActivity: number;
+  foodStability: number;
+  predatorBalance: number;
+  collapsedHabitats: number;
+  populationGrowthRate: number;
+  plantConsumptionRate: number;
+  averageFitness: number;
+  averageAdaptationDiversity: number;
+  highestAdaptedPopulation: string | null;
+  lowestFitnessPopulation: string | null;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +147,45 @@ function hasWeatherSnapshot(metadata: Prisma.JsonValue | null): boolean {
   return Boolean(weather?.success === true && isRecord(weather.metadata));
 }
 
+function normalizeHealthStatus(value: unknown): WorldHealthBadge | null {
+  return value === "Healthy" || value === "Warning" || value === "Error" ? value : null;
+}
+
+function getSystemHealth(metadata: Prisma.JsonValue | null): {
+  status: WorldHealthBadge | null;
+  diagnostics: string[];
+} {
+  if (isRecord(metadata) && isRecord(metadata.health)) {
+    const status = normalizeHealthStatus(metadata.health.status);
+    const diagnostics = Array.isArray(metadata.health.diagnostics)
+      ? metadata.health.diagnostics.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+    return { status, diagnostics };
+  }
+
+  const pipelineHealth = getPipeline(metadata)
+    .map((entry) => isRecord(entry.health) ? entry.health : null)
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  const diagnostics = pipelineHealth.flatMap((entry) => Array.isArray(entry.diagnostics)
+    ? entry.diagnostics.filter((diagnostic): diagnostic is string => typeof diagnostic === "string")
+    : []);
+
+  if (pipelineHealth.some((entry) => entry.status === "Error")) {
+    return { status: "Error", diagnostics };
+  }
+
+  if (pipelineHealth.some((entry) => entry.status === "Warning")) {
+    return { status: "Warning", diagnostics };
+  }
+
+  if (pipelineHealth.some((entry) => entry.status === "Healthy")) {
+    return { status: "Healthy", diagnostics };
+  }
+
+  return { status: null, diagnostics };
+}
+
 function deriveBadge(input: {
   currentTick: string;
   latestTick: string | null;
@@ -121,8 +195,14 @@ function deriveBadge(input: {
   biomeCoveragePercent: number;
   plantCoveragePercent: number;
   weatherSnapshotAvailable: boolean;
+  systemHealthStatus: WorldHealthBadge | null;
 }): WorldHealthBadge {
-  if (input.lastTickStatus === "failed" || input.failedSystems.length > 0 || input.lastErrorMessage) {
+  if (
+    input.lastTickStatus === "failed" ||
+    input.failedSystems.length > 0 ||
+    input.lastErrorMessage ||
+    input.systemHealthStatus === "Error"
+  ) {
     return "Error";
   }
 
@@ -131,7 +211,8 @@ function deriveBadge(input: {
     (input.latestTick !== null && input.currentTick !== input.latestTick) ||
     input.biomeCoveragePercent < 100 ||
     input.plantCoveragePercent < 100 ||
-    !input.weatherSnapshotAvailable
+    !input.weatherSnapshotAvailable ||
+    input.systemHealthStatus === "Warning"
   ) {
     return "Warning";
   }
@@ -150,6 +231,7 @@ export function buildWorldHealthSummary(input: WorldHealthInput): WorldHealthSum
   const biomeCoveragePercent = roundPercent(input.biomeCellCount, input.expectedCellCount);
   const plantCoveragePercent = roundPercent(input.plantCellCount, input.expectedCellCount);
   const weatherSnapshotAvailable = input.latestTick ? hasWeatherSnapshot(input.latestTick.metadata) : false;
+  const systemHealth = input.latestTick ? getSystemHealth(input.latestTick.metadata) : { status: null, diagnostics: [] };
   const occupiedAnimalHabitatPercent = roundPercent(input.animalCellCount, input.expectedCellCount);
   const badge = deriveBadge({
     currentTick,
@@ -160,6 +242,7 @@ export function buildWorldHealthSummary(input: WorldHealthInput): WorldHealthSum
     biomeCoveragePercent,
     plantCoveragePercent,
     weatherSnapshotAvailable,
+    systemHealthStatus: systemHealth.status,
   });
 
   return {
@@ -179,7 +262,25 @@ export function buildWorldHealthSummary(input: WorldHealthInput): WorldHealthSum
     totalWildlifePopulation: input.totalWildlifePopulation,
     averageAnimalHabitatSuitability: input.averageAnimalHabitatSuitability,
     averageAnimalHealth: input.averageAnimalHealth,
+    averageEcosystemHealth: input.averageEcosystemHealth,
+    averageBiodiversity: input.averageBiodiversity,
+    migrationActivity: input.migrationActivity,
+    foodStability: input.foodStability,
+    predatorBalance: input.predatorBalance,
+    collapsedHabitats: input.collapsedHabitats,
+    populationGrowthRate: input.populationGrowthRate,
+    plantConsumptionRate: input.plantConsumptionRate,
+    averageFitness: input.averageFitness,
+    averageAdaptationDiversity: input.averageAdaptationDiversity,
+    highestAdaptedPopulation: input.highestAdaptedPopulation,
+    lowestFitnessPopulation: input.lowestFitnessPopulation,
+    averageMigrationInstinct: input.averageMigrationInstinct,
+    averageDiseaseResistance: input.averageDiseaseResistance,
+    averageReproductiveEfficiency: input.averageReproductiveEfficiency,
+    averageClimateAdaptation: input.averageClimateAdaptation,
     weatherSnapshotAvailable,
+    systemHealthStatus: systemHealth.status,
+    systemHealthDiagnostics: systemHealth.diagnostics,
     badge,
   };
 }
@@ -191,7 +292,105 @@ type PersistedAnimalHealthRow = {
   total_population: number | null;
   average_suitability: number | null;
   average_health: number | null;
+  average_ecosystem_health?: number | null;
+  average_biodiversity?: number | null;
+  migration_activity?: number | null;
+  food_stability?: number | null;
+  predator_balance?: number | null;
+  collapsed_habitats?: bigint | number | null;
+  population_growth_rate?: number | null;
+  plant_consumption_rate?: number | null;
+  average_fitness?: number | null;
+  average_adaptation_diversity?: number | null;
+  highest_adapted_population?: unknown;
+  lowest_fitness_population?: unknown;
+  average_migration_instinct?: number | null;
+  average_disease_resistance?: number | null;
+  average_reproductive_efficiency?: number | null;
+  average_climate_adaptation?: number | null;
 };
+
+type SchemaColumnProbe = {
+  has_animal_columns: boolean;
+};
+
+const EMPTY_ANIMAL_HEALTH = Object.freeze({
+  animalCellCount: 0,
+  animalSpeciesCount: 0,
+  totalWildlifePopulation: 0,
+  averageAnimalHabitatSuitability: 0,
+  averageAnimalHealth: 0,
+  averageEcosystemHealth: 0,
+  averageBiodiversity: 0,
+  migrationActivity: 0,
+  foodStability: 0,
+  predatorBalance: 0,
+  collapsedHabitats: 0,
+  populationGrowthRate: 0,
+  plantConsumptionRate: 0,
+  averageFitness: 0,
+  averageAdaptationDiversity: 0,
+  highestAdaptedPopulation: null,
+  lowestFitnessPopulation: null,
+  averageMigrationInstinct: 0,
+  averageDiseaseResistance: 0,
+  averageReproductiveEfficiency: 0,
+  averageClimateAdaptation: 0,
+});
+
+async function hasPersistedAnimalHealthColumns(): Promise<boolean> {
+  const rows = await prisma.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'dominantSpeciesId'
+    ) AS has_animal_columns
+  `;
+
+  return Boolean(rows[0]?.has_animal_columns);
+}
+
+async function hasPersistedEcosystemHealthColumns(): Promise<boolean> {
+  const rows = await prisma.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'ecosystemHealthScore'
+    ) AS has_animal_columns
+  `;
+
+  return Boolean(rows[0]?.has_animal_columns);
+}
+
+function formatPopulationSummary(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const speciesName = typeof value.speciesName === "string" ? value.speciesName : null;
+  const score = typeof value.score === "number" ? value.score : null;
+
+  if (!speciesName || score === null) {
+    return null;
+  }
+
+  return `${speciesName} (${Math.round(score * 100) / 100})`;
+}
+
+async function hasPersistedPopulationAdaptationColumns(): Promise<boolean> {
+  const rows = await prisma.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'averageFitness'
+    ) AS has_animal_columns
+  `;
+
+  return Boolean(rows[0]?.has_animal_columns);
+}
 
 async function getPersistedAnimalHealth(planetId: string): Promise<{
   animalCellCount: number;
@@ -199,8 +398,76 @@ async function getPersistedAnimalHealth(planetId: string): Promise<{
   totalWildlifePopulation: number;
   averageAnimalHabitatSuitability: number;
   averageAnimalHealth: number;
+  averageEcosystemHealth: number;
+  averageBiodiversity: number;
+  migrationActivity: number;
+  foodStability: number;
+  predatorBalance: number;
+  collapsedHabitats: number;
+  populationGrowthRate: number;
+  plantConsumptionRate: number;
+  averageFitness: number;
+  averageAdaptationDiversity: number;
+  highestAdaptedPopulation: string | null;
+  lowestFitnessPopulation: string | null;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
 }> {
-  const rows = await prisma.$queryRaw<PersistedAnimalHealthRow[]>`
+  if (!await hasPersistedAnimalHealthColumns()) {
+    return EMPTY_ANIMAL_HEALTH;
+  }
+
+  const hasEcosystemColumns = await hasPersistedEcosystemHealthColumns();
+  const hasAdaptationColumns = await hasPersistedPopulationAdaptationColumns();
+  const rows = hasEcosystemColumns && hasAdaptationColumns
+    ? await prisma.$queryRaw<PersistedAnimalHealthRow[]>`
+    SELECT
+      COUNT(DISTINCT NULLIF("dominantSpeciesId", 'none')) AS animal_species_count,
+      COUNT(*) FILTER (WHERE "totalWildlifePopulation" > 0) AS occupied_cells,
+      COALESCE(SUM("totalWildlifePopulation"), 0) AS total_population,
+      COALESCE(AVG(NULLIF("averageHabitatSuitability", 0)), 0) AS average_suitability,
+      COALESCE(AVG(NULLIF("averageAnimalHealth", 0)), 0) AS average_health,
+      COALESCE(AVG(NULLIF("ecosystemHealthScore", 0)), 0) AS average_ecosystem_health,
+      COALESCE(AVG(GREATEST("biodiversityScore", "animalBiodiversityScore")), 0) AS average_biodiversity,
+      COALESCE(AVG("migrationActivity"), 0) AS migration_activity,
+      COALESCE(AVG("foodStability"), 0) AS food_stability,
+      COALESCE(AVG("predatorPreyBalance"), 0) AS predator_balance,
+      COUNT(*) FILTER (WHERE "ecosystemHealthStatus" IN ('Collapsed', 'Collapsing')) AS collapsed_habitats,
+      COALESCE(AVG("populationGrowthRate"), 0) AS population_growth_rate,
+      COALESCE(AVG("plantConsumptionRate"), 0) AS plant_consumption_rate,
+      COALESCE(AVG("averageFitness"), 0) AS average_fitness,
+      COALESCE(AVG("adaptationDiversity"), 0) AS average_adaptation_diversity,
+      (ARRAY_AGG("highestAdaptedPopulation" ORDER BY "averageFitness" DESC))[1] AS highest_adapted_population,
+      (ARRAY_AGG("lowestFitnessPopulation" ORDER BY "averageFitness" ASC))[1] AS lowest_fitness_population,
+      COALESCE(AVG("averageMigrationInstinct"), 0) AS average_migration_instinct,
+      COALESCE(AVG("averageDiseaseResistance"), 0) AS average_disease_resistance,
+      COALESCE(AVG("averageReproductiveEfficiency"), 0) AS average_reproductive_efficiency,
+      COALESCE(AVG("averageClimateAdaptation"), 0) AS average_climate_adaptation
+    FROM "PlanetCell"
+    WHERE "planetId" = ${planetId}
+  `
+    : hasEcosystemColumns
+      ? await prisma.$queryRaw<PersistedAnimalHealthRow[]>`
+    SELECT
+      COUNT(DISTINCT NULLIF("dominantSpeciesId", 'none')) AS animal_species_count,
+      COUNT(*) FILTER (WHERE "totalWildlifePopulation" > 0) AS occupied_cells,
+      COALESCE(SUM("totalWildlifePopulation"), 0) AS total_population,
+      COALESCE(AVG(NULLIF("averageHabitatSuitability", 0)), 0) AS average_suitability,
+      COALESCE(AVG(NULLIF("averageAnimalHealth", 0)), 0) AS average_health,
+      COALESCE(AVG(NULLIF("ecosystemHealthScore", 0)), 0) AS average_ecosystem_health,
+      COALESCE(AVG(GREATEST("biodiversityScore", "animalBiodiversityScore")), 0) AS average_biodiversity,
+      COALESCE(AVG("migrationActivity"), 0) AS migration_activity,
+      COALESCE(AVG("foodStability"), 0) AS food_stability,
+      COALESCE(AVG("predatorPreyBalance"), 0) AS predator_balance,
+      COUNT(*) FILTER (WHERE "ecosystemHealthStatus" IN ('Collapsed', 'Collapsing')) AS collapsed_habitats,
+      COALESCE(AVG("populationGrowthRate"), 0) AS population_growth_rate,
+      COALESCE(AVG("plantConsumptionRate"), 0) AS plant_consumption_rate
+    FROM "PlanetCell"
+    WHERE "planetId" = ${planetId}
+  `
+      : await prisma.$queryRaw<PersistedAnimalHealthRow[]>`
     SELECT
       COUNT(DISTINCT NULLIF("dominantSpeciesId", 'none')) AS animal_species_count,
       COUNT(*) FILTER (WHERE "totalWildlifePopulation" > 0) AS occupied_cells,
@@ -209,8 +476,7 @@ async function getPersistedAnimalHealth(planetId: string): Promise<{
       COALESCE(AVG(NULLIF("averageAnimalHealth", 0)), 0) AS average_health
     FROM "PlanetCell"
     WHERE "planetId" = ${planetId}
-  `;
-  const row = rows[0];
+  `;  const row = rows[0];
 
   return {
     animalCellCount: Number(row?.occupied_cells ?? 0),
@@ -218,6 +484,22 @@ async function getPersistedAnimalHealth(planetId: string): Promise<{
     totalWildlifePopulation: Number(row?.total_population ?? 0),
     averageAnimalHabitatSuitability: Number(row?.average_suitability ?? 0),
     averageAnimalHealth: Number(row?.average_health ?? 0),
+    averageEcosystemHealth: Number(row?.average_ecosystem_health ?? 0),
+    averageBiodiversity: Number(row?.average_biodiversity ?? 0),
+    migrationActivity: Number(row?.migration_activity ?? 0),
+    foodStability: Number(row?.food_stability ?? 0),
+    predatorBalance: Number(row?.predator_balance ?? 0),
+    collapsedHabitats: Number(row?.collapsed_habitats ?? 0),
+    populationGrowthRate: Number(row?.population_growth_rate ?? 0),
+    plantConsumptionRate: Number(row?.plant_consumption_rate ?? 0),
+    averageFitness: Number(row?.average_fitness ?? 0),
+    averageAdaptationDiversity: Number(row?.average_adaptation_diversity ?? 0),
+    highestAdaptedPopulation: formatPopulationSummary(row?.highest_adapted_population),
+    lowestFitnessPopulation: formatPopulationSummary(row?.lowest_fitness_population),
+    averageMigrationInstinct: Number(row?.average_migration_instinct ?? 0),
+    averageDiseaseResistance: Number(row?.average_disease_resistance ?? 0),
+    averageReproductiveEfficiency: Number(row?.average_reproductive_efficiency ?? 0),
+    averageClimateAdaptation: Number(row?.average_climate_adaptation ?? 0),
   };
 }
 
@@ -266,6 +548,22 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
         totalWildlifePopulation: 0,
         averageAnimalHabitatSuitability: 0,
         averageAnimalHealth: 0,
+        averageEcosystemHealth: 0,
+        averageBiodiversity: 0,
+        migrationActivity: 0,
+        foodStability: 0,
+        predatorBalance: 0,
+        collapsedHabitats: 0,
+        populationGrowthRate: 0,
+        plantConsumptionRate: 0,
+        averageFitness: 0,
+        averageAdaptationDiversity: 0,
+        highestAdaptedPopulation: null,
+        lowestFitnessPopulation: null,
+        averageMigrationInstinct: 0,
+        averageDiseaseResistance: 0,
+        averageReproductiveEfficiency: 0,
+        averageClimateAdaptation: 0,
       }),
   ]);
 
@@ -281,6 +579,22 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
     totalWildlifePopulation: animalHealth.totalWildlifePopulation,
     averageAnimalHabitatSuitability: animalHealth.averageAnimalHabitatSuitability,
     averageAnimalHealth: animalHealth.averageAnimalHealth,
+    averageEcosystemHealth: animalHealth.averageEcosystemHealth,
+    averageBiodiversity: animalHealth.averageBiodiversity,
+    migrationActivity: animalHealth.migrationActivity,
+    foodStability: animalHealth.foodStability,
+    predatorBalance: animalHealth.predatorBalance,
+    collapsedHabitats: animalHealth.collapsedHabitats,
+    populationGrowthRate: animalHealth.populationGrowthRate,
+    plantConsumptionRate: animalHealth.plantConsumptionRate,
+    averageFitness: animalHealth.averageFitness,
+    averageAdaptationDiversity: animalHealth.averageAdaptationDiversity,
+    highestAdaptedPopulation: animalHealth.highestAdaptedPopulation,
+    lowestFitnessPopulation: animalHealth.lowestFitnessPopulation,
+    averageMigrationInstinct: animalHealth.averageMigrationInstinct,
+    averageDiseaseResistance: animalHealth.averageDiseaseResistance,
+    averageReproductiveEfficiency: animalHealth.averageReproductiveEfficiency,
+    averageClimateAdaptation: animalHealth.averageClimateAdaptation,
   });
 }
 

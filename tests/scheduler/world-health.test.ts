@@ -42,6 +42,22 @@ function healthInput(overrides: Partial<WorldHealthInput> = {}): WorldHealthInpu
     totalWildlifePopulation: 1234,
     averageAnimalHabitatSuitability: 0.62,
     averageAnimalHealth: 0.74,
+    averageEcosystemHealth: 0.68,
+    averageBiodiversity: 0.57,
+    migrationActivity: 0.16,
+    foodStability: 0.71,
+    predatorBalance: 0.64,
+    collapsedHabitats: 2,
+    populationGrowthRate: 0.0123,
+    plantConsumptionRate: 0.29,
+    averageFitness: 0.66,
+    averageAdaptationDiversity: 0.12,
+    highestAdaptedPopulation: "Yak (0.82)",
+    lowestFitnessPopulation: "Camel (0.31)",
+    averageMigrationInstinct: 0.44,
+    averageDiseaseResistance: 0.52,
+    averageReproductiveEfficiency: 0.58,
+    averageClimateAdaptation: 0.61,
     ...overrides,
   };
 }
@@ -64,6 +80,22 @@ describe("world health summary", () => {
     expect(health.totalWildlifePopulation).toBe(1234);
     expect(health.averageAnimalHabitatSuitability).toBe(0.62);
     expect(health.averageAnimalHealth).toBe(0.74);
+    expect(health.averageEcosystemHealth).toBe(0.68);
+    expect(health.averageBiodiversity).toBe(0.57);
+    expect(health.migrationActivity).toBe(0.16);
+    expect(health.foodStability).toBe(0.71);
+    expect(health.predatorBalance).toBe(0.64);
+    expect(health.collapsedHabitats).toBe(2);
+    expect(health.populationGrowthRate).toBe(0.0123);
+    expect(health.plantConsumptionRate).toBe(0.29);
+    expect(health.averageFitness).toBe(0.66);
+    expect(health.averageAdaptationDiversity).toBe(0.12);
+    expect(health.highestAdaptedPopulation).toBe("Yak (0.82)");
+    expect(health.lowestFitnessPopulation).toBe("Camel (0.31)");
+    expect(health.averageMigrationInstinct).toBe(0.44);
+    expect(health.averageDiseaseResistance).toBe(0.52);
+    expect(health.averageReproductiveEfficiency).toBe(0.58);
+    expect(health.averageClimateAdaptation).toBe(0.61);
   });
 
   it("warns when World.currentTick is stale versus the latest SimulationTick", () => {
@@ -111,5 +143,24 @@ describe("world health summary", () => {
     expect(health.badge).toBe("Warning");
     expect(health.biomeCoveragePercent).toBe(50);
     expect(health.plantCoveragePercent).toBe(0);
+  });
+  it("aggregates scheduler system health metadata", () => {
+    const health = buildWorldHealthSummary(healthInput({
+      latestTick: {
+        tick: 3n,
+        success: true,
+        metadata: {
+          ...weatherMetadata(),
+          health: {
+            status: "Warning",
+            diagnostics: ["Atmosphere drift approaching warning threshold."],
+          },
+        },
+      },
+    }));
+
+    expect(health.badge).toBe("Warning");
+    expect(health.systemHealthStatus).toBe("Warning");
+    expect(health.systemHealthDiagnostics).toEqual(["Atmosphere drift approaching warning threshold."]);
   });
 });

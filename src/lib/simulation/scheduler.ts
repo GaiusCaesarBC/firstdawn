@@ -3,15 +3,29 @@ import { Prisma, WorldEnvironment, WorldStatus, type World } from "@prisma/clien
 import { getAtmosphereSummary, type AtmosphericSummary } from "./atmosphere-engine";
 import { getBiomeSummary, type BiomeSummary } from "./biome-engine";
 
-import { simulationEventBus, type TickEventBus } from "./event-bus";
+import {
+  DeterministicSystemEventBus,
+  simulationEventBus,
+  type CollectedSimulationEvent,
+  type TickEventBus,
+} from "./event-bus";
 import { getHydrologySummary, type HydrologySummary } from "./hydrology-engine";
 import { getSimulationMetrics, type SimulationMetrics } from "./metrics";
 import { createDeterministicRandom } from "./random";
+import { assertValidSystems } from "./registry";
 import { getPlantEcologySummary, type PlantSummary } from "./plant-engine";
 import { getPlanetResourceSummary, type PlanetResourceSummary } from "./resources-engine";
 import { getTerrainSummary, type TerrainSummary } from "./terrain-engine";
 import { getWeatherSummary, type WeatherSummary } from "./weather-engine";
-import { DEFAULT_SIMULATION_SYSTEMS, type SimulationSystem, type SimulationSystemResult } from "./systems";
+import {
+  DEFAULT_SIMULATION_SYSTEMS,
+  type SimulationMetricsCollector,
+  type SimulationSystem,
+  type SimulationSystemContext,
+  type SimulationSystemHealth,
+  type SimulationSystemMetrics,
+  type SimulationSystemResult,
+} from "./systems";
 import { prisma } from "../worlds/world-lifecycle";
 import { createHrTimer } from "../utils/timing";
 import { createGrid, type SpatialGrid } from "./grid/grid";
@@ -118,6 +132,163 @@ function latestKnownTick(world: World, latestPersistedTick: bigint | null | unde
     : world.currentTick;
 }
 
+function createMetricsCollector(): SimulationMetricsCollector {
+  let cellsProcessed = 0;
+  let entitiesProcessed = 0;
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  return {
+    addCells(count) {
+      if (Number.isFinite(count) && count > 0) {
+        cellsProcessed += count;
+      }
+    },
+    addEntities(count) {
+      if (Number.isFinite(count) && count > 0) {
+        entitiesProcessed += count;
+      }
+    },
+    warn(message) {
+      warnings.push(message);
+    },
+    error(message) {
+      errors.push(message);
+    },
+    snapshot() {
+      return {
+        cellsProcessed,
+        entitiesProcessed,
+        warnings: [...warnings],
+        errors: [...errors],
+      };
+    },
+  };
+}
+
+function createSystemLogger(system: SimulationSystem) {
+  const prefix = `[simulation:${system.id}]`;
+
+  return {
+    debug(message: string, metadata?: Record<string, unknown>) {
+      if (process.env.NODE_ENV === "development") {
+        console.debug(prefix, message, metadata ?? "");
+      }
+    },
+    info(message: string, metadata?: Record<string, unknown>) {
+      if (process.env.NODE_ENV === "development") {
+        console.info(prefix, message, metadata ?? "");
+      }
+    },
+    warn(message: string, metadata?: Record<string, unknown>) {
+      console.warn(prefix, message, metadata ?? "");
+    },
+    error(message: string, metadata?: Record<string, unknown>) {
+      console.error(prefix, message, metadata ?? "");
+    },
+  };
+}
+
+function countFromMetadata(metadata: Prisma.InputJsonValue | undefined, keys: string[]): number {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return 0;
+  }
+
+  return keys.reduce((sum, key) => {
+    const value = metadata[key as keyof typeof metadata];
+    return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function estimateMemoryDelta(before: number | null, after: number | null): number | null {
+  if (before === null || after === null) {
+    return null;
+  }
+
+  return Math.max(0, after - before);
+}
+
+function getHeapUsed(): number | null {
+  return typeof process.memoryUsage === "function" ? process.memoryUsage().heapUsed : null;
+}
+
+function completeMetrics(input: {
+  result: SimulationSystemResult;
+  collected: ReturnType<SimulationMetricsCollector["snapshot"]>;
+  durationMs: number;
+  eventCount: number;
+  memoryEstimateBytes: number | null;
+}): SimulationSystemMetrics {
+  const resultMetrics = input.result.metrics ?? {};
+  const inferredCellsProcessed = input.collected.cellsProcessed || countFromMetadata(input.result.metadata, [
+    "generatedCells",
+    "createdCells",
+    "updatedCells",
+    "unchangedCells",
+  ]);
+  const inferredEntitiesProcessed = input.collected.entitiesProcessed || countFromMetadata(input.result.metadata, [
+    "animalSpeciesCount",
+    "totalWildlifePopulation",
+  ]);
+  const cellsProcessed = resultMetrics.cellsProcessed ?? inferredCellsProcessed;
+  const entitiesProcessed = resultMetrics.entitiesProcessed ?? inferredEntitiesProcessed;
+  const seconds = input.durationMs / 1000;
+
+  return {
+    executionTimeMs: resultMetrics.executionTimeMs ?? input.durationMs,
+    cellsProcessed,
+    entitiesProcessed,
+    eventsEmitted: resultMetrics.eventsEmitted ?? input.eventCount,
+    warnings: resultMetrics.warnings ?? input.collected.warnings,
+    errors: resultMetrics.errors ?? input.collected.errors,
+    memoryEstimateBytes: resultMetrics.memoryEstimateBytes ?? input.memoryEstimateBytes,
+    cellsPerSecond: resultMetrics.cellsPerSecond ?? (seconds > 0 ? cellsProcessed / seconds : null),
+    entitiesPerSecond: resultMetrics.entitiesPerSecond ?? (seconds > 0 ? entitiesProcessed / seconds : null),
+  };
+}
+
+function defaultHealth(result: SimulationSystemResult): SimulationSystemHealth {
+  if (!result.success) {
+    return {
+      status: "Error",
+      diagnostics: result.error ? [result.error] : ["System update failed."],
+    };
+  }
+
+  const warningCount = result.metrics?.warnings?.length ?? 0;
+
+  return {
+    status: warningCount > 0 ? "Warning" : "Healthy",
+    diagnostics: warningCount > 0 ? result.metrics?.warnings : undefined,
+  };
+}
+
+async function persistCollectedEvents(
+  client: Prisma.TransactionClient,
+  events: CollectedSimulationEvent[],
+): Promise<void> {
+  if (events.length === 0) {
+    return;
+  }
+
+  await client.event.createMany({
+    data: events.map((event) => ({
+      worldId: event.worldId,
+      tick: event.tick,
+      type: event.type,
+      title: event.title,
+      description: event.description ?? null,
+      historicalWeight: event.historicalWeight ?? 0,
+      metadata: {
+        systemId: event.systemId,
+        ...(event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+          ? event.metadata
+          : { payload: event.metadata ?? null }),
+      },
+    })),
+  });
+}
+
 export class SimulationScheduler {
   private static readonly defaultScheduler = new SimulationScheduler(DEFAULT_SIMULATION_SYSTEMS);
 
@@ -131,10 +302,13 @@ export class SimulationScheduler {
     for (const system of systems) {
       this.register(system);
     }
+
+    assertValidSystems(this.systems);
   }
 
   static register(system: SimulationSystem): void {
     this.defaultScheduler.register(system);
+    assertValidSystems(this.defaultScheduler.systems);
   }
 
   static listSystems(): SimulationSystem[] {
@@ -162,14 +336,20 @@ export class SimulationScheduler {
   }
 
   register(system: SimulationSystem): void {
+    if (!system.id.trim()) {
+      throw new Error("Simulation systems require a stable id.");
+    }
+
     if (!system.name.trim()) {
       throw new Error("Simulation systems require a stable name.");
     }
 
-    this.systems = [
-      ...this.systems.filter((existingSystem) => existingSystem.name !== system.name),
-      system,
-    ].sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));
+    if (this.systems.some((existingSystem) => existingSystem.id === system.id)) {
+      throw new Error(`Duplicate simulation system id: ${system.id}.`);
+    }
+
+    this.systems = [...this.systems, system]
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
   }
 
   listSystems(): SimulationSystem[] {
@@ -177,6 +357,8 @@ export class SimulationScheduler {
   }
 
   async advanceTick(worldId: string): Promise<TickExecutionResult> {
+    assertValidSystems(this.systems);
+
     const startedAt = new Date();
     const startedMs = Date.now();
 
@@ -201,7 +383,17 @@ export class SimulationScheduler {
         const fromTick = latestKnownTick(world, latestTick._max.tick);
         const tick = fromTick + 1n;
         const tickWorld = fromTick === world.currentTick ? world : { ...world, currentTick: fromTick };
-        const systemResults: Array<SimulationSystemResult & { systemName: string; systemLabel: string }> = [];
+        const eventBus = new DeterministicSystemEventBus();
+        const cache = new Map<string, unknown>();
+        const systemResults: Array<SimulationSystemResult & {
+          systemId: string;
+          systemName: string;
+          systemLabel: string;
+          systemVersion: number;
+          dependencies: string[];
+          metrics: SimulationSystemMetrics;
+          health: SimulationSystemHealth;
+        }> = [];
 
         await this.eventBus.emit("beforeTick", {
           worldId: world.id,
@@ -222,28 +414,89 @@ export class SimulationScheduler {
             tick,
             systemName: system.name,
           });
-
+          const metricsCollector = createMetricsCollector();
+          const context: SimulationSystemContext = {
+            world: tickWorld,
+            tick,
+            seed: world.seed ?? "",
+            timeScale: world.timeScale,
+            random,
+            client,
+            repositories: { client },
+            cache,
+            eventBus,
+            metrics: metricsCollector,
+            logger: createSystemLogger(system),
+          };
+          const beforeMemory = getHeapUsed();
+          const systemStartedMs = Date.now();
+          const beforeEventCount = eventBus.countForSystem(system.id);
           let result: SimulationSystemResult;
+          let health: SimulationSystemHealth | undefined;
+          let serialized: Prisma.InputJsonValue | undefined;
 
           try {
-            result = normalizeSystemResult(await system.run({
-              world: tickWorld,
-              tick,
-              timeScale: world.timeScale,
-              random,
-              client,
-            }));
+            await system.initialize?.(context);
+            result = normalizeSystemResult(await (system.run ?? system.update)(context));
+
+            for (const event of result.events ?? []) {
+              eventBus.emit(system.id, world.id, tick, event);
+            }
+
+            const emittedEvents = await system.emitEvents?.(context) ?? [];
+
+            for (const event of emittedEvents) {
+              eventBus.emit(system.id, world.id, tick, event);
+            }
+
+            health = result.health ?? await system.health?.(context);
+
+            if (result.success) {
+              await system.persist?.(context);
+            }
+
+            serialized = await system.serialize?.(context);
           } catch (error) {
+            const message = formatError(error);
+            metricsCollector.error(message);
             result = {
               success: false,
-              error: formatError(error),
+              error: message,
             };
+            health = defaultHealth(result);
           }
+
+          const systemDurationMs = Math.max(0, Date.now() - systemStartedMs);
+          const afterMemory = getHeapUsed();
+          const eventCount = eventBus.countForSystem(system.id) - beforeEventCount;
+          const collectedMetrics = metricsCollector.snapshot();
+          const metrics = completeMetrics({
+            result,
+            collected: collectedMetrics,
+            durationMs: systemDurationMs,
+            eventCount,
+            memoryEstimateBytes: estimateMemoryDelta(beforeMemory, afterMemory),
+          });
+          const resolvedHealth = health ?? defaultHealth({ ...result, metrics });
+
+          result = {
+            ...result,
+            metrics,
+            health: resolvedHealth,
+            ...(serialized !== undefined
+              ? { metadata: { result: result.metadata ?? null, serialized } }
+              : {}),
+          };
 
           systemResults.push({
             ...result,
+            systemId: system.id,
             systemName: system.name,
             systemLabel: system.label,
+            systemVersion: system.version,
+            dependencies: system.dependencies,
+            metrics,
+            health: resolvedHealth,
           });
 
           await this.eventBus.emit("afterSystem", {
@@ -264,6 +517,7 @@ export class SimulationScheduler {
         const success = failedSystemCount === 0;
         const completedAt = new Date();
         const durationMs = Math.max(0, completedAt.getTime() - startedMs);
+        const collectedEvents = eventBus.collect();
 
         await client.world.update({
           where: { id: world.id },
@@ -284,17 +538,31 @@ export class SimulationScheduler {
               fromTick: fromTick.toString(),
               toTick: tick.toString(),
               timeScale: world.timeScale,
+              eventsEmitted: collectedEvents.length,
+              profiling: {
+                totalDurationMs: durationMs,
+                totalCellsProcessed: systemResults.reduce((sum, result) => sum + result.metrics.cellsProcessed, 0),
+                totalEntitiesProcessed: systemResults.reduce((sum, result) => sum + result.metrics.entitiesProcessed, 0),
+              },
               pipeline: systemResults.map((result) => ({
+                id: result.systemId,
                 name: result.systemName,
                 label: result.systemLabel,
+                version: result.systemVersion,
+                dependencies: result.dependencies,
                 success: result.success,
                 error: result.error ?? null,
                 metadata: result.metadata ?? null,
+                metrics: result.metrics,
+                health: result.health,
               })),
               failedSystems: failedSystems.map((result) => result.systemName),
+              health: aggregateHealth(systemResults.map((result) => result.health)),
             },
           },
         });
+
+        await persistCollectedEvents(client, collectedEvents);
 
         await this.eventBus.emit("afterTick", {
           worldId: world.id,
@@ -308,7 +576,7 @@ export class SimulationScheduler {
           tick,
           success,
           durationMs,
-          metadata: { systemCount: systemResults.length },
+          metadata: { systemCount: systemResults.length, eventsEmitted: collectedEvents.length },
         });
 
         return {
@@ -514,6 +782,24 @@ export class SimulationScheduler {
 
     return response;
   }
+}
+
+function aggregateHealth(health: SimulationSystemHealth[]): SimulationSystemHealth {
+  if (health.some((entry) => entry.status === "Error")) {
+    return {
+      status: "Error",
+      diagnostics: health.flatMap((entry) => entry.diagnostics ?? []),
+    };
+  }
+
+  if (health.some((entry) => entry.status === "Warning")) {
+    return {
+      status: "Warning",
+      diagnostics: health.flatMap((entry) => entry.diagnostics ?? []),
+    };
+  }
+
+  return { status: "Healthy" };
 }
 
 export function advanceTick(worldId: string): Promise<TickExecutionResult> {

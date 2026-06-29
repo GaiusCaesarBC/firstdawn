@@ -1,4 +1,4 @@
-import type { SimulationSystemResult } from "./systems/types";
+import type { SimulationSystemEvent, SimulationSystemResult } from "./systems/types";
 
 export type TickEventName =
   | "beforeTick"
@@ -43,6 +43,33 @@ export class TickEventBus {
     for (const handler of handlers) {
       await handler(payload);
     }
+  }
+}
+
+export type CollectedSimulationEvent = SimulationSystemEvent & {
+  worldId: string;
+  tick: bigint;
+  systemId: string;
+};
+
+export class DeterministicSystemEventBus {
+  private readonly events: CollectedSimulationEvent[] = [];
+
+  emit(systemId: string, worldId: string, tick: bigint, event: SimulationSystemEvent): void {
+    this.events.push({
+      ...event,
+      worldId,
+      tick,
+      systemId,
+    });
+  }
+
+  collect(): CollectedSimulationEvent[] {
+    return [...this.events];
+  }
+
+  countForSystem(systemId: string): number {
+    return this.events.filter((event) => event.systemId === systemId).length;
   }
 }
 

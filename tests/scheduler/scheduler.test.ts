@@ -332,3 +332,65 @@ describe("simulation scheduler failure behavior", () => {
 });
 
 
+
+describe("simulation scheduler plugin architecture", () => {
+  it("collects plugin metrics, emitted events, and health summaries", async () => {
+    const world = await track(createActiveSandboxTestWorld());
+    const scheduler = new SimulationScheduler([
+      createPlaceholderSystem("test-plugin-system", "Test Plugin System", 10, (context) => {
+        context.metrics.addCells(12);
+        context.metrics.addEntities(3);
+
+        return {
+          success: true,
+          metadata: { deterministic: true },
+          events: [
+            {
+              type: "TEST_PLUGIN_EVENT",
+              title: "Test Plugin Event",
+              historicalWeight: 0.25,
+              metadata: { source: "scheduler-plugin-test" },
+            },
+          ],
+          health: {
+            status: "Warning",
+            diagnostics: ["Plugin health warning for test coverage."],
+          },
+        };
+      }),
+    ]);
+
+    await scheduler.advanceTick(world.id);
+
+    const tick = await prisma.simulationTick.findUniqueOrThrow({
+      where: { worldId_tick: { tick: 1n, worldId: world.id } },
+    });
+    const event = await prisma.event.findFirstOrThrow({
+      where: { worldId: world.id, type: "TEST_PLUGIN_EVENT" },
+    });
+    const metadata = tick.metadata as {
+      eventsEmitted?: number;
+      health?: { status?: string };
+      pipeline?: Array<{
+        id: string;
+        metrics?: { cellsProcessed?: number; entitiesProcessed?: number; eventsEmitted?: number };
+        health?: { status?: string; diagnostics?: string[] };
+      }>;
+    };
+    const plugin = metadata.pipeline?.find((entry) => entry.id === "test-plugin-system");
+
+    expect(metadata.eventsEmitted).toBe(1);
+    expect(metadata.health?.status).toBe("Warning");
+    expect(plugin?.metrics).toMatchObject({
+      cellsProcessed: 12,
+      entitiesProcessed: 3,
+      eventsEmitted: 1,
+    });
+    expect(plugin?.health).toMatchObject({
+      status: "Warning",
+      diagnostics: ["Plugin health warning for test coverage."],
+    });
+    expect(event.title).toBe("Test Plugin Event");
+    expect(event.historicalWeight).toBe(0.25);
+  });
+});
