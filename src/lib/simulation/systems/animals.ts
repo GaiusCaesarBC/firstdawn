@@ -33,6 +33,14 @@ export async function run(context: SimulationSystemContext): Promise<SimulationS
     totalWildlifePopulation: result.summary.totalWildlifePopulation,
     averageHabitatSuitability: result.summary.averageHabitatSuitability,
     averageHealth: result.summary.averageHealth,
+    averageFitness: result.summary.averageFitness,
+    averageAdaptationDiversity: result.summary.averageAdaptationDiversity,
+    highestAdaptedPopulation: result.summary.highestAdaptedPopulation,
+    lowestFitnessPopulation: result.summary.lowestFitnessPopulation,
+    averageMigrationInstinct: result.summary.averageMigrationInstinct,
+    averageDiseaseResistance: result.summary.averageDiseaseResistance,
+    averageReproductiveEfficiency: result.summary.averageReproductiveEfficiency,
+    averageClimateAdaptation: result.summary.averageClimateAdaptation,
     dominantAnimalDistribution: result.summary.dominantAnimalDistribution,
   });
 }

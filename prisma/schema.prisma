@@ -161,6 +161,27 @@ model PlanetCell {
   totalWildlifePopulation Float @default(0)
   averageAnimalHealth Float  @default(0)
   averageHabitatSuitability Float @default(0)
+  plantConsumptionRate Float @default(0)
+  effectivePlantBiomass Float @default(0)
+  predationPressure Float @default(0)
+  predatorPreyBalance Float @default(0)
+  foodStability Float @default(0)
+  carryingCapacityUsage Float @default(0)
+  migrationActivity Float @default(0)
+  populationGrowthRate Float @default(0)
+  averageFitness Float @default(0)
+  adaptationDiversity Float @default(0)
+  averageMigrationInstinct Float @default(0)
+  averageDiseaseResistance Float @default(0)
+  averageReproductiveEfficiency Float @default(0)
+  averageClimateAdaptation Float @default(0)
+  highestAdaptedPopulation Json @default("null")
+  lowestFitnessPopulation Json @default("null")
+  ecosystemHealthScore Float @default(0)
+  ecosystemHealthStatus String @default("Collapsed")
+  ecosystemEvents Json @default("[]")
+  ecosystemHistory Json @default("[]")
+  movementVectors Json @default("[]")
   animalGeneratedAt DateTime?
   animalUpdatedAt   DateTime?
   generatedAt       DateTime @default(now())
@@ -175,6 +196,7 @@ model PlanetCell {
   @@index([planetId, dominantPlantKey])
   @@index([planetId, dominantAnimalGuildKey])
   @@index([planetId, dominantSpeciesId])
+  @@index([planetId, ecosystemHealthStatus])
   @@index([row, column])
 }
 
@@ -189,12 +211,23 @@ model AnimalPopulation {
   migrationPressure  Float      @default(0)
   habitatSuitability Float      @default(0)
   carryingCapacity   Float      @default(0)
+  predationPressure  Float      @default(0)
+  competitionPressure Float     @default(0)
+  carryingCapacityUsage Float   @default(0)
+  inboundMigration   Float      @default(0)
+  outboundMigration  Float      @default(0)
+  netMigration       Float      @default(0)
+  populationTrend    Float      @default(0)
+  fitnessScore       Float      @default(0)
+  adaptationProfile  Json       @default("{}")
+  adaptationTrends   Json       @default("[]")
   lastUpdatedTick    BigInt
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
   @@unique([planetCellId, speciesId])
   @@index([speciesId])
+  @@index([speciesId, fitnessScore])
   @@index([lastUpdatedTick])
 }
 

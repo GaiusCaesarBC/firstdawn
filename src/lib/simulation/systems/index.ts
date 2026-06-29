@@ -1,3 +1,4 @@
+import { adaptationSystem } from "./adaptation";
 import { animalsSystem } from "./animals";
 import { atmosphereSystem } from "./atmosphere";
 import { astronomySystem } from "./astronomy";
@@ -44,7 +45,8 @@ registerSystem(withDependencies(plantsSystem, ["biomes"]));
 registerSystem(withDependencies(chemistrySystem, ["plants"]));
 registerSystem(withDependencies(biologySystem, ["chemistry"]));
 registerSystem(withDependencies(animalsSystem, ["plants", "biology"]));
-registerSystem(withDependencies(humansSystem, ["animals"]));
+registerSystem(withDependencies(adaptationSystem, ["animals"]));
+registerSystem(withDependencies(humansSystem, ["adaptation"]));
 registerSystem(withDependencies(civilizationSystem, ["humans"]));
 registerSystem(withDependencies(economySystem, ["civilization"]));
 registerSystem(withDependencies(cultureSystem, ["economy"]));

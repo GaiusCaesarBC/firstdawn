@@ -15,6 +15,7 @@ This repository currently establishes the foundation only:
 * Tailwind CSS styling
 * Prisma schema prepared for PostgreSQL
 * Foundational simulation modules
+* Population adaptation foundation for deterministic wildlife fitness and long-term local adaptation
 * Project constitution, vision, roadmap, and architecture notes
 
 The first two people do not exist yet. No AI citizens have been created. No production simulation loop has been started.
@@ -66,5 +67,6 @@ npm run prisma:validate
 * [ROADMAP.md](./ROADMAP.md)
 * [FOUNDING.md](./FOUNDING.md)
 * [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+* [docs/PERMANENT_ARCHITECTURE.md](./docs/PERMANENT_ARCHITECTURE.md)
 * [docs/QUESTIONS.md](./docs/QUESTIONS.md)
 * [docs/IDEAS.md](./docs/IDEAS.md)

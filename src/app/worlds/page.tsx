@@ -294,6 +294,26 @@ function WorldHealthPanel({ health }: { health: WorldHealthSummary | null }) {
         <DetailItem label="Last Error" value={health.lastErrorMessage ?? "-"} />
         <DetailItem label="Biome Coverage" value={formatPercent(health.biomeCoveragePercent)} />
         <DetailItem label="Plant Coverage" value={formatPercent(health.plantCoveragePercent)} />
+        <DetailItem label="Animal Species" value={formatNumber(health.animalSpeciesCount, 0)} />
+        <DetailItem label="Occupied Habitat" value={formatPercent(health.occupiedAnimalHabitatPercent)} />
+        <DetailItem label="Wildlife Population" value={formatNumber(health.totalWildlifePopulation, 0)} />
+        <DetailItem label="Animal Suitability" value={formatNumber(health.averageAnimalHabitatSuitability, 3)} />
+        <DetailItem label="Animal Health" value={formatNumber(health.averageAnimalHealth, 3)} />
+        <DetailItem label="Ecosystem Health" value={formatNumber(health.averageEcosystemHealth, 3)} />
+        <DetailItem label="Biodiversity" value={formatNumber(health.averageBiodiversity, 3)} />
+        <DetailItem label="Migration Activity" value={formatNumber(health.migrationActivity, 3)} />
+        <DetailItem label="Food Stability" value={formatNumber(health.foodStability, 3)} />
+        <DetailItem label="Predator Balance" value={formatNumber(health.predatorBalance, 3)} />
+        <DetailItem label="Collapsed Habitats" value={formatNumber(health.collapsedHabitats, 0)} />
+        <DetailItem label="Population Growth" value={formatNumber(health.populationGrowthRate, 4)} />
+        <DetailItem label="Plant Consumption" value={formatNumber(health.plantConsumptionRate, 3)} />
+        <DetailItem label="Average Population Fitness" value={formatNumber(health.averageFitness, 3)} />
+        <DetailItem label="Adaptation Diversity" value={formatNumber(health.averageAdaptationDiversity, 3)} />
+        <DetailItem label="Average Climate Adaptation" value={formatNumber(health.averageClimateAdaptation, 3)} />
+        <DetailItem label="Average Disease Resistance" value={formatNumber(health.averageDiseaseResistance, 3)} />
+        <DetailItem label="Average Reproductive Efficiency" value={formatNumber(health.averageReproductiveEfficiency, 3)} />
+        <DetailItem label="Highest Fitness Population" value={health.highestAdaptedPopulation ?? "-"} />
+        <DetailItem label="Lowest Fitness Population" value={health.lowestFitnessPopulation ?? "-"} />
         <DetailItem label="Weather Snapshot" value={health.weatherSnapshotAvailable ? "Available" : "Missing"} />
       </div>
     </section>

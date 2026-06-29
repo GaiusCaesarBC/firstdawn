@@ -50,6 +50,20 @@ type LayerId =
   | "biomes"
   | "vegetation"
   | "animals"
+  | "ecosystemMigration"
+  | "foodAvailability"
+  | "predationPressure"
+  | "ecosystemHealth"
+  | "carryingCapacity"
+  | "plantConsumption"
+  | "adaptationFitness"
+  | "adaptationCold"
+  | "adaptationHeat"
+  | "adaptationDrought"
+  | "adaptationDisease"
+  | "adaptationMigration"
+  | "adaptationForaging"
+  | "adaptationPredator"
   | "civilizations";
 
 type OverlayId =
@@ -61,6 +75,7 @@ type OverlayId =
   | "cellIds"
   | "neighborLinks"
   | "drainageArrows"
+  | "animalMovementVectors"
   | "pressureBands"
   | "mountainOutlines";
 
@@ -128,6 +143,7 @@ const OVERLAY_TOGGLE_LABELS: Record<OverlayId, string> = {
   cellIds: "Cell IDs",
   neighborLinks: "Neighbor links",
   drainageArrows: "Drainage arrows",
+  animalMovementVectors: "Animal movement",
   pressureBands: "Pressure bands",
   mountainOutlines: "Mountain outlines",
 };
@@ -168,7 +184,21 @@ const LAYERS: LayerDefinition[] = [
   { id: "rareMaterials", label: "Rare Materials", group: "Resources", description: "Rare earth, uranium, sulfur, and quartz potential." },
   { id: "biomes", label: "Biomes", group: "Future Layers", description: "Live deterministic biome classifications." },
   { id: "vegetation", label: "Vegetation", group: "Future Layers", description: "Live dominant plant ecology and biomass." },
-  { id: "animals", label: "Animals", group: "Future Layers", description: "Animal ecology status for the selected cell or planet." },
+  { id: "animals", label: "Animals", group: "Ecosystem", description: "Animal ecology status for the selected cell or planet." },
+  { id: "ecosystemMigration", label: "Migration", group: "Ecosystem", description: "Population movement pressure and realized neighbor migration." },
+  { id: "foodAvailability", label: "Food Availability", group: "Ecosystem", description: "Food stability after plant consumption and seasonal stress." },
+  { id: "predationPressure", label: "Predation", group: "Ecosystem", description: "Predator pressure on herbivore populations." },
+  { id: "ecosystemHealth", label: "Ecosystem Health", group: "Ecosystem", description: "Composite cell health from biodiversity, food, balance, migration, water, and climate stress." },
+  { id: "carryingCapacity", label: "Carrying Capacity", group: "Ecosystem", description: "Wildlife usage of available carrying capacity." },
+  { id: "plantConsumption", label: "Plant Consumption", group: "Ecosystem", description: "Edible biomass consumed by herbivores and omnivores." },
+  { id: "adaptationFitness", label: "Overall Fitness", group: "Adaptation", description: "Population fitness after habitat, food, climate, movement, predation, and adaptation multipliers." },
+  { id: "adaptationCold", label: "Cold Adaptation", group: "Adaptation", description: "Average cold tolerance among present populations." },
+  { id: "adaptationHeat", label: "Heat Adaptation", group: "Adaptation", description: "Average heat tolerance among present populations." },
+  { id: "adaptationDrought", label: "Drought Adaptation", group: "Adaptation", description: "Average drought tolerance among present populations." },
+  { id: "adaptationDisease", label: "Disease Resistance", group: "Adaptation", description: "Average disease resistance among present populations." },
+  { id: "adaptationMigration", label: "Migration Instinct", group: "Adaptation", description: "Average migration instinct among present populations." },
+  { id: "adaptationForaging", label: "Foraging Efficiency", group: "Adaptation", description: "Average foraging efficiency among present populations." },
+  { id: "adaptationPredator", label: "Predator Awareness", group: "Adaptation", description: "Average predator awareness among present populations." },
   { id: "civilizations", label: "Civilizations", group: "Future Layers", description: "Civilization status for the selected cell or planet." },
 ];
 
@@ -181,6 +211,7 @@ const DEFAULT_OVERLAYS: Record<OverlayId, boolean> = {
   cellIds: false,
   neighborLinks: false,
   drainageArrows: false,
+  animalMovementVectors: false,
   pressureBands: false,
   mountainOutlines: false,
 };
@@ -195,6 +226,7 @@ function createAutoOverlayMask(totalCells: number, scale: number): Record<Overla
     cellIds: close && totalCells <= 64 * 128,
     neighborLinks: close && totalCells <= 64 * 128,
     drainageArrows: close && totalCells <= 256 * 512,
+    animalMovementVectors: close && totalCells <= 64 * 128,
     windArrows: medium || close,
     pressureBands: medium || close,
     watershedBoundaries: medium || close,
@@ -211,6 +243,7 @@ function createAutoOverlayMask(totalCells: number, scale: number): Record<Overla
   if (totalCells >= 1024 * 2048) {
     mask.gridLines = false;
     mask.drainageArrows = false;
+    mask.animalMovementVectors = false;
     mask.windArrows = medium || close;
   }
 
@@ -224,6 +257,7 @@ function createAutoOverlayMask(totalCells: number, scale: number): Record<Overla
     mask.cellIds = false;
     mask.neighborLinks = false;
     mask.drainageArrows = false;
+    mask.animalMovementVectors = false;
   }
 
   return mask;
@@ -478,6 +512,14 @@ function getLayerRange(snapshot: AtlasSnapshot, layerId: LayerId): NumericRange 
     case "waterResources":
     case "buildingMaterials":
     case "rareMaterials":
+    case "adaptationFitness":
+    case "adaptationCold":
+    case "adaptationHeat":
+    case "adaptationDrought":
+    case "adaptationDisease":
+    case "adaptationMigration":
+    case "adaptationForaging":
+    case "adaptationPredator":
       return { minimum: 0, maximum: 1 };
     case "daylightHours":
       return { minimum: 0, maximum: 24 };
@@ -706,6 +748,64 @@ function getLayerColor(snapshot: AtlasSnapshot, cell: AtlasCell, layerId: LayerI
       return interpolateColor("#20251d", cell.dominantPlantColor || "#5f7d3a", clamp(cell.plantDensity * 0.72 + cell.biomassScore * 0.28, 0, 1));
     case "animals":
       return interpolateColor("#20252a", cell.dominantAnimalGuildColor || "#7d8f4b", clamp(cell.animalDensity * 0.56 + cell.averageHabitatSuitability * 0.24 + cell.averagePopulationHealth * 0.2, 0, 1));
+    case "ecosystemMigration":
+      return sampleGradient(cell.migrationActivity, [
+        { at: 0, color: "#20272d" },
+        { at: 0.35, color: "#3b5b69" },
+        { at: 0.7, color: "#a57945" },
+        { at: 1, color: "#d15b45" },
+      ]);
+    case "foodAvailability":
+      return sampleGradient(cell.foodStability, [
+        { at: 0, color: "#3a2428" },
+        { at: 0.35, color: "#7d5c43" },
+        { at: 0.7, color: "#7f9b58" },
+        { at: 1, color: "#c7d979" },
+      ]);
+    case "predationPressure":
+      return sampleGradient(cell.predationPressure, [
+        { at: 0, color: "#242b31" },
+        { at: 0.35, color: "#5b5147" },
+        { at: 0.72, color: "#945044" },
+        { at: 1, color: "#6f2632" },
+      ]);
+    case "ecosystemHealth":
+      return sampleGradient(cell.ecosystemHealthScore, [
+        { at: 0, color: "#3b2025" },
+        { at: 0.32, color: "#8a573f" },
+        { at: 0.62, color: "#8e9d5b" },
+        { at: 0.82, color: "#5fa873" },
+        { at: 1, color: "#bce28a" },
+      ]);
+    case "carryingCapacity":
+      return sampleGradient(cell.carryingCapacityUsage, [
+        { at: 0, color: "#20272d" },
+        { at: 0.45, color: "#516f65" },
+        { at: 0.72, color: "#a59a54" },
+        { at: 1, color: "#be5d46" },
+      ]);
+    case "plantConsumption":
+      return sampleGradient(cell.plantConsumptionRate, [
+        { at: 0, color: "#202b24" },
+        { at: 0.4, color: "#607d50" },
+        { at: 0.72, color: "#b18a4d" },
+        { at: 1, color: "#b8463e" },
+      ]);
+    case "adaptationFitness":
+    case "adaptationCold":
+    case "adaptationHeat":
+    case "adaptationDrought":
+    case "adaptationDisease":
+    case "adaptationMigration":
+    case "adaptationForaging":
+    case "adaptationPredator":
+      return sampleGradient(getAdaptationLayerValue(cell, layerId), [
+        { at: 0, color: "#252832" },
+        { at: 0.32, color: "#4f5d6c" },
+        { at: 0.58, color: "#6d8f75" },
+        { at: 0.78, color: "#b6ad67" },
+        { at: 1, color: "#f1d98d" },
+      ]);
     case "civilizations":
       return "#303238";
     default:
@@ -738,6 +838,35 @@ function getLegendItems(snapshot: AtlasSnapshot, layerId: LayerId): LegendItem[]
       return getTopCellEntries(snapshot.cells, (cell) => cell.dominantPlantKey, (cell) => ({ label: formatAtlasLabel(cell.dominantPlantName, "No Established Plant Life"), color: cell.dominantPlantColor || "#5f7d3a" }), 8);
     case "animals":
       return getTopCellEntries(snapshot.cells.filter((cell) => cell.dominantSpeciesId !== "none"), (cell) => cell.dominantSpeciesId, (cell) => ({ label: cell.dominantSpeciesName, color: cell.dominantAnimalGuildColor || "#7d8f4b" }), 8);
+    case "ecosystemHealth":
+      return [
+        { label: "Collapsed", color: "#3b2025" },
+        { label: "Collapsing", color: "#8a573f" },
+        { label: "Stressed", color: "#8e9d5b" },
+        { label: "Healthy", color: "#5fa873" },
+        { label: "Excellent", color: "#bce28a" },
+      ];
+    case "ecosystemMigration":
+    case "foodAvailability":
+    case "predationPressure":
+    case "carryingCapacity":
+    case "plantConsumption":
+      return [0, 0.25, 0.5, 0.75, 1].map((value) => ({ label: formatNumber(value, 2), color: getLayerColor(snapshot, { ...snapshot.cells[0], migrationActivity: value, foodStability: value, predationPressure: value, carryingCapacityUsage: value, plantConsumptionRate: value, averageFitness: value } as AtlasCell, layerId) }));
+    case "adaptationFitness":
+    case "adaptationCold":
+    case "adaptationHeat":
+    case "adaptationDrought":
+    case "adaptationDisease":
+    case "adaptationMigration":
+    case "adaptationForaging":
+    case "adaptationPredator":
+      return [0, 0.25, 0.5, 0.75, 1].map((value) => ({ label: formatNumber(value, 2), color: sampleGradient(value, [
+        { at: 0, color: "#252832" },
+        { at: 0.32, color: "#4f5d6c" },
+        { at: 0.58, color: "#6d8f75" },
+        { at: 0.78, color: "#b6ad67" },
+        { at: 1, color: "#f1d98d" },
+      ]) }));
     case "civilizations":
       return [{ label: "Not Generated Yet", color: "#303238" }];
     case "watersheds":
@@ -934,6 +1063,41 @@ function getTopCellEntries<T extends LegendItem>(
     .map((entry) => entry.meta);
 }
 
+type AdaptationProfileKey = keyof AtlasCell["animalPopulations"][number]["adaptationProfile"];
+
+function averagePopulationAdaptation(cell: AtlasCell, trait: AdaptationProfileKey): number {
+  const populations = cell.animalPopulations.filter((population) => population.population > 0);
+
+  if (populations.length === 0) {
+    return 0;
+  }
+
+  return populations.reduce((sum, population) => sum + (population.adaptationProfile?.[trait] ?? 0), 0) / populations.length;
+}
+
+function getAdaptationLayerValue(cell: AtlasCell, layerId: LayerId): number {
+  switch (layerId) {
+    case "adaptationFitness":
+      return cell.averageFitness;
+    case "adaptationCold":
+      return averagePopulationAdaptation(cell, "coldTolerance");
+    case "adaptationHeat":
+      return averagePopulationAdaptation(cell, "heatTolerance");
+    case "adaptationDrought":
+      return averagePopulationAdaptation(cell, "droughtTolerance");
+    case "adaptationDisease":
+      return averagePopulationAdaptation(cell, "diseaseResistance");
+    case "adaptationMigration":
+      return averagePopulationAdaptation(cell, "migrationInstinct");
+    case "adaptationForaging":
+      return averagePopulationAdaptation(cell, "foragingEfficiency");
+    case "adaptationPredator":
+      return averagePopulationAdaptation(cell, "predatorAwareness");
+    default:
+      return 0;
+  }
+}
+
 function averageCellMetric(cells: readonly AtlasCell[], metric: (cell: AtlasCell) => number): number {
   if (cells.length === 0) {
     return 0;
@@ -981,6 +1145,19 @@ type FutureLayerMetrics = {
   averageHabitatSuitability: number;
   foodAvailability: number;
   migrationPressure: number;
+  plantConsumptionRate: number;
+  effectivePlantBiomass: number;
+  predationPressure: number;
+  predatorPreyBalance: number;
+  foodStability: number;
+  carryingCapacityUsage: number;
+  migrationActivity: number;
+  populationGrowthRate: number;
+  ecosystemHealthScore: number;
+  ecosystemHealthStatus: AtlasCell["ecosystemHealthStatus"];
+  ecosystemEvents: AtlasCell["ecosystemEvents"];
+  ecosystemHistory: AtlasCell["ecosystemHistory"];
+  movementVectors: AtlasCell["movementVectors"];
   animalPopulations: AtlasCell["animalPopulations"];
   animalTags: readonly string[];
 };
@@ -1026,6 +1203,19 @@ function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell 
       averageHabitatSuitability: selectedCell.averageHabitatSuitability,
       foodAvailability: selectedCell.animalPopulations[0]?.foodAvailability ?? selectedCell.preyAvailability,
       migrationPressure: selectedCell.migrationPressure,
+      plantConsumptionRate: selectedCell.plantConsumptionRate,
+      effectivePlantBiomass: selectedCell.effectivePlantBiomass,
+      predationPressure: selectedCell.predationPressure,
+      predatorPreyBalance: selectedCell.predatorPreyBalance,
+      foodStability: selectedCell.foodStability,
+      carryingCapacityUsage: selectedCell.carryingCapacityUsage,
+      migrationActivity: selectedCell.migrationActivity,
+      populationGrowthRate: selectedCell.populationGrowthRate,
+      ecosystemHealthScore: selectedCell.ecosystemHealthScore,
+      ecosystemHealthStatus: selectedCell.ecosystemHealthStatus,
+      ecosystemEvents: selectedCell.ecosystemEvents,
+      ecosystemHistory: selectedCell.ecosystemHistory,
+      movementVectors: selectedCell.movementVectors,
       animalPopulations: selectedCell.animalPopulations,
       animalTags: selectedCell.animalTags,
     };
@@ -1097,6 +1287,19 @@ function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell 
     averageHabitatSuitability: averageCellMetric(cells, (cell) => cell.averageHabitatSuitability),
     foodAvailability: averageCellMetric(cells, (cell) => cell.animalPopulations[0]?.foodAvailability ?? cell.preyAvailability),
     migrationPressure: averageCellMetric(cells, (cell) => cell.migrationPressure),
+    plantConsumptionRate: averageCellMetric(cells, (cell) => cell.plantConsumptionRate),
+    effectivePlantBiomass: averageCellMetric(cells, (cell) => cell.effectivePlantBiomass),
+    predationPressure: averageCellMetric(cells, (cell) => cell.predationPressure),
+    predatorPreyBalance: averageCellMetric(cells, (cell) => cell.predatorPreyBalance),
+    foodStability: averageCellMetric(cells, (cell) => cell.foodStability),
+    carryingCapacityUsage: averageCellMetric(cells, (cell) => cell.carryingCapacityUsage),
+    migrationActivity: averageCellMetric(cells, (cell) => cell.migrationActivity),
+    populationGrowthRate: averageCellMetric(cells, (cell) => cell.populationGrowthRate),
+    ecosystemHealthScore: averageCellMetric(cells, (cell) => cell.ecosystemHealthScore),
+    ecosystemHealthStatus: cells.filter((cell) => cell.ecosystemHealthStatus === "Collapsed" || cell.ecosystemHealthStatus === "Collapsing").length > cells.length * 0.1 ? "Stressed" : "Healthy",
+    ecosystemEvents: cells.flatMap((cell) => cell.ecosystemEvents).slice(0, 6),
+    ecosystemHistory: cells.flatMap((cell) => cell.ecosystemHistory).slice(0, 6),
+    movementVectors: cells.flatMap((cell) => cell.movementVectors).slice(0, 8),
     animalPopulations: dominantAnimal ? cells.find((cell) => cell.dominantSpeciesName === dominantAnimal.meta.name)?.animalPopulations ?? [] : [],
     animalTags: dominantAnimal?.meta.tags ?? [],
   };
@@ -1210,6 +1413,32 @@ function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ 
         { label: "Migration pressure", value: formatNumber(metrics.migrationPressure, 3) },
       ];
     }
+    case "ecosystemMigration":
+      return [{ label: "Migration activity", value: formatNumber(averageCellMetric(cells, (cell) => cell.migrationActivity), 3) }, { label: "Movement vectors", value: formatNumber(cells.reduce((sum, cell) => sum + cell.movementVectors.length, 0), 0) }, ...overall];
+    case "foodAvailability":
+      return [{ label: "Food stability", value: formatNumber(averageCellMetric(cells, (cell) => cell.foodStability), 3) }, { label: "Effective biomass", value: formatNumber(averageCellMetric(cells, (cell) => cell.effectivePlantBiomass), 3) }, ...overall];
+    case "predationPressure":
+      return [{ label: "Predation pressure", value: formatNumber(averageCellMetric(cells, (cell) => cell.predationPressure), 3) }, { label: "Predator balance", value: formatNumber(averageCellMetric(cells, (cell) => cell.predatorPreyBalance), 3) }, ...overall];
+    case "ecosystemHealth":
+      return [{ label: "Ecosystem health", value: formatNumber(averageCellMetric(cells, (cell) => cell.ecosystemHealthScore), 3) }, { label: "Collapsed habitats", value: formatNumber(cells.filter((cell) => cell.ecosystemHealthStatus === "Collapsed" || cell.ecosystemHealthStatus === "Collapsing").length, 0) }, ...overall];
+    case "carryingCapacity":
+      return [{ label: "Capacity usage", value: formatNumber(averageCellMetric(cells, (cell) => cell.carryingCapacityUsage), 3) }, { label: "Population growth", value: formatNumber(averageCellMetric(cells, (cell) => cell.populationGrowthRate), 4) }, ...overall];
+    case "plantConsumption":
+      return [{ label: "Plant consumption", value: formatNumber(averageCellMetric(cells, (cell) => cell.plantConsumptionRate), 3) }, { label: "Food stability", value: formatNumber(averageCellMetric(cells, (cell) => cell.foodStability), 3) }, ...overall];
+    case "adaptationFitness":
+    case "adaptationCold":
+    case "adaptationHeat":
+    case "adaptationDrought":
+    case "adaptationDisease":
+    case "adaptationMigration":
+    case "adaptationForaging":
+    case "adaptationPredator":
+      return [
+        { label: getLayerDefinition(layerId).label, value: formatNumber(averageCellMetric(cells, (cell) => getAdaptationLayerValue(cell, layerId)), 3) },
+        { label: "Average fitness", value: formatNumber(averageCellMetric(cells, (cell) => cell.averageFitness), 3) },
+        { label: "Adaptation diversity", value: formatNumber(averageCellMetric(cells, (cell) => cell.adaptationDiversity), 3) },
+        { label: "Climate adaptation", value: formatNumber(averageCellMetric(cells, (cell) => cell.averageClimateAdaptation), 3) },
+      ];
     case "civilizations":
       return [{ label: "Civilization layer", value: "Not Generated Yet" }];
     case "watersheds": {
@@ -1314,6 +1543,21 @@ function WorldHealthPanel({ health, loading, error }: { health: WorldHealthSumma
         <DetailCard label="Wildlife Population" value={health ? formatNumber(health.totalWildlifePopulation, 0) : "-"} />
         <DetailCard label="Animal Suitability" value={health ? formatNumber(health.averageAnimalHabitatSuitability, 3) : "-"} />
         <DetailCard label="Animal Health" value={health ? formatNumber(health.averageAnimalHealth, 3) : "-"} />
+        <DetailCard label="Ecosystem Health" value={health ? formatNumber(health.averageEcosystemHealth, 3) : "-"} />
+        <DetailCard label="Biodiversity" value={health ? formatNumber(health.averageBiodiversity, 3) : "-"} />
+        <DetailCard label="Migration Activity" value={health ? formatNumber(health.migrationActivity, 3) : "-"} />
+        <DetailCard label="Food Stability" value={health ? formatNumber(health.foodStability, 3) : "-"} />
+        <DetailCard label="Predator Balance" value={health ? formatNumber(health.predatorBalance, 3) : "-"} />
+        <DetailCard label="Collapsed Habitats" value={health ? formatNumber(health.collapsedHabitats, 0) : "-"} />
+        <DetailCard label="Population Growth" value={health ? formatNumber(health.populationGrowthRate, 4) : "-"} />
+        <DetailCard label="Plant Consumption" value={health ? formatNumber(health.plantConsumptionRate, 3) : "-"} />
+        <DetailCard label="Average Population Fitness" value={health ? formatNumber(health.averageFitness, 3) : "-"} />
+        <DetailCard label="Adaptation Diversity" value={health ? formatNumber(health.averageAdaptationDiversity, 3) : "-"} />
+        <DetailCard label="Average Climate Adaptation" value={health ? formatNumber(health.averageClimateAdaptation, 3) : "-"} />
+        <DetailCard label="Average Disease Resistance" value={health ? formatNumber(health.averageDiseaseResistance, 3) : "-"} />
+        <DetailCard label="Average Reproductive Efficiency" value={health ? formatNumber(health.averageReproductiveEfficiency, 3) : "-"} />
+        <DetailCard label="Highest Fitness Population" value={health?.highestAdaptedPopulation ?? "-"} />
+        <DetailCard label="Lowest Fitness Population" value={health?.lowestFitnessPopulation ?? "-"} />
         <DetailCard label="Weather Snapshot" value={health?.weatherSnapshotAvailable ? "Available" : "Missing"} />
       </div>
     </section>
@@ -1389,6 +1633,44 @@ function VegetationEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
 }
 
 
+function HealthBar({ value }: { value: number }) {
+  const segments = Array.from({ length: 10 }, (_, index) => index < Math.round(clamp(value, 0, 1) * 10));
+
+  return <span className="font-mono text-xs text-stone-200">{segments.map((filled) => filled ? "#" : "-").join("")}</span>;
+}
+
+function statusTone(status: AtlasCell["ecosystemHealthStatus"]): string {
+  if (status === "Excellent" || status === "Healthy") {
+    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
+  }
+
+  if (status === "Stressed") {
+    return "border-amber-300/40 bg-amber-300/10 text-amber-100";
+  }
+
+  return "border-red-400/40 bg-red-950/30 text-red-100";
+}
+
+function ecosystemExplanation(metrics: FutureLayerMetrics): string {
+  if (metrics.ecosystemHealthStatus === "Collapsed") {
+    return "Food, water, or population balance can no longer support stable wildlife.";
+  }
+
+  if (metrics.foodStability < 0.38) {
+    return "Food availability is the main limiting factor for current populations.";
+  }
+
+  if (metrics.migrationActivity > 0.5) {
+    return "Migration pressure is actively redistributing populations into neighboring cells.";
+  }
+
+  if (metrics.plantConsumptionRate > 0.58) {
+    return "Grazing pressure is drawing down edible plant biomass.";
+  }
+
+  return "Biodiversity, food, and population balance are supporting a stable ecosystem.";
+}
+
 function AnimalEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
   const topPopulations = metrics.animalPopulations.filter((population) => population.population > 0).slice(0, 5);
 
@@ -1401,6 +1683,11 @@ function AnimalEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
           <p className="mt-2 text-base text-stone-50">{metrics.dominantSpeciesName}</p>
           <p className="mt-1 text-xs text-stone-400">{metrics.dominantAnimalGuildName}{metrics.animalCoverage ? ` / ${metrics.animalCoverage}` : ""}</p>
         </div>
+        <span className={`border px-2 py-1 text-[10px] font-semibold uppercase ${statusTone(metrics.ecosystemHealthStatus)}`}>{metrics.ecosystemHealthStatus}</span>
+      </div>
+      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+        <div className="flex items-center justify-between gap-3 text-xs"><span className="text-stone-500">Health</span><HealthBar value={metrics.ecosystemHealthScore} /></div>
+        <p className="mt-2 text-xs text-stone-300">{ecosystemExplanation(metrics)}</p>
       </div>
       <div className="mt-4 grid gap-2">
         <FutureMetricRow label={metrics.isCellScope ? "Species present" : "Peak cell species"} value={formatNumber(metrics.speciesCount, 0)} />
@@ -1408,11 +1695,27 @@ function AnimalEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
         <FutureMetricRow label={metrics.isCellScope ? "Suitability" : "Average suitability"} value={formatNumber(metrics.averageHabitatSuitability, 3)} />
         <FutureMetricRow label={metrics.isCellScope ? "Health" : "Average health"} value={formatNumber(metrics.averagePopulationHealth, 3)} />
         <FutureMetricRow label="Food availability" value={formatNumber(metrics.foodAvailability, 3)} />
+        <FutureMetricRow label="Food stability" value={formatNumber(metrics.foodStability, 3)} />
+        <FutureMetricRow label="Plant consumption" value={formatNumber(metrics.plantConsumptionRate, 3)} />
+        <FutureMetricRow label="Predation" value={formatNumber(metrics.predationPressure, 3)} />
+        <FutureMetricRow label="Carrying usage" value={formatNumber(metrics.carryingCapacityUsage, 3)} />
         <FutureMetricRow label="Migration pressure" value={formatNumber(metrics.migrationPressure, 3)} />
+        <FutureMetricRow label="Migration activity" value={formatNumber(metrics.migrationActivity, 3)} />
+        <FutureMetricRow label="Growth trend" value={formatNumber(metrics.populationGrowthRate, 4)} />
         <FutureMetricRow label="Tags" value={formatTagList(metrics.animalTags)} />
+        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Top Species</p>
         {topPopulations.map((population) => (
-          <FutureMetricRow key={population.speciesId} label={population.speciesName} value={`${formatNumber(population.population, 0)} / ${formatNumber(population.health, 2)}`} />
+          <FutureMetricRow key={population.speciesId} label={population.speciesName} value={`${formatNumber(population.population, 0)} / fitness ${formatNumber(population.fitnessScore, 2)} / cold ${formatNumber(population.adaptationProfile.coldTolerance, 2)}`} />
         ))}
+        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Recent History</p>
+        {metrics.ecosystemHistory.slice(0, 4).map((event) => (
+          <FutureMetricRow key={event.id} label={`Tick ${event.tick}`} value={event.type} />
+        ))}
+        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Influencing Systems</p>
+        <FutureMetricRow label="Climate" value={metrics.ecosystemHealthScore >= 0.62 ? "Temperature and season support growth." : "Climate stress reduced stability."} />
+        <FutureMetricRow label="Plants" value={metrics.plantConsumptionRate > 0.58 ? "Grazing reduced edible biomass." : "Plant biomass supports food supply."} />
+        <FutureMetricRow label="Weather" value={metrics.foodStability < 0.38 ? "Dry or seasonal stress reduced food." : "Water and regrowth remain adequate."} />
+        <FutureMetricRow label="Migration" value={metrics.migrationActivity > 0.5 ? "Moderate outward movement detected." : "Movement remains locally stable."} />
       </div>
     </div>
   );
@@ -1906,6 +2209,33 @@ export function WorldMapAtlasClient({
           to.x + to.width / 2,
           to.y + to.height / 2,
         );
+      }
+    }
+
+    if (isOverlayVisible("animalMovementVectors") || selectedLayerId === "ecosystemMigration") {
+      context.strokeStyle = "rgba(255, 198, 96, 0.76)";
+      context.fillStyle = "rgba(255, 198, 96, 0.76)";
+      context.lineWidth = 1;
+
+      for (const cell of snapshot.cells) {
+        const from = transform.cellRect(cell);
+
+        for (const vector of cell.movementVectors.filter((entry) => entry.fromCellId === cell.id).slice(0, 3)) {
+          const target = cellByIdRef.current.get(vector.toCellId);
+
+          if (!target) {
+            continue;
+          }
+
+          const to = transform.cellRect(target);
+          drawArrow(
+            context,
+            from.x + from.width / 2,
+            from.y + from.height / 2,
+            to.x + to.width / 2,
+            to.y + to.height / 2,
+          );
+        }
       }
     }
 
@@ -2779,11 +3109,50 @@ export function WorldMapAtlasClient({
                         <p>Dominant guild {formatAtlasLabel(inspectorCell.dominantAnimalGuildName, "No Established Animal Guild")}</p>
                         <p>Species present {formatNumber(inspectorCell.speciesCount, 0)}</p>
                         <p>Total population {formatNumber(inspectorCell.totalWildlifePopulation, 0)}</p>
+                        <p>Ecosystem health {inspectorCell.ecosystemHealthStatus} / {formatNumber(inspectorCell.ecosystemHealthScore, 3)}</p>
                         <p>Habitat suitability {formatNumber(inspectorCell.averageHabitatSuitability, 3)}</p>
                         <p>Health {formatNumber(inspectorCell.averagePopulationHealth, 3)}</p>
                         <p>Food availability {formatNumber(inspectorCell.animalPopulations[0]?.foodAvailability ?? 0, 3)}</p>
+                        <p>Food stability {formatNumber(inspectorCell.foodStability, 3)}</p>
+                        <p>Plant consumption {formatNumber(inspectorCell.plantConsumptionRate, 3)}</p>
+                        <p>Predation pressure {formatNumber(inspectorCell.predationPressure, 3)}</p>
+                        <p>Carrying usage {formatNumber(inspectorCell.carryingCapacityUsage, 3)}</p>
                         <p>Migration pressure {formatNumber(inspectorCell.migrationPressure, 3)}</p>
+                        <p>Migration activity {formatNumber(inspectorCell.migrationActivity, 3)}</p>
+                        <p>Movement vectors {inspectorCell.movementVectors.map((vector) => `${vector.speciesId}: ${vector.fromCellId} -> ${vector.toCellId} (${formatNumber(vector.population, 0)})`).join(", ") || "None"}</p>
+                        <p>History {inspectorCell.ecosystemHistory.slice(0, 4).map((event) => `Tick ${event.tick}: ${event.type}`).join(", ") || "None"}</p>
                         <p>Populations {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 8).map((population) => `${population.speciesName}: ${formatNumber(population.population, 0)}`).join(", ") || "None"}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Adaptation</p>
+                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
+                        <p>Overall fitness {formatNumber(inspectorCell.averageFitness, 3)}</p>
+                        <p>Adaptation diversity {formatNumber(inspectorCell.adaptationDiversity, 3)}</p>
+                        <p>Highest adapted {inspectorCell.highestAdaptedPopulation ? `${inspectorCell.highestAdaptedPopulation.speciesName}: ${formatNumber(inspectorCell.highestAdaptedPopulation.score, 3)}` : "None"}</p>
+                        <p>Lowest fitness {inspectorCell.lowestFitnessPopulation ? `${inspectorCell.lowestFitnessPopulation.speciesName}: ${formatNumber(inspectorCell.lowestFitnessPopulation.score, 3)}` : "None"}</p>
+                        <p>Top strengths {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 3).map((population) => {
+                          const traits = Object.entries(population.adaptationProfile).sort((left, right) => right[1] - left[1]).slice(0, 2).map(([trait, value]) => `${titleize(trait)} ${formatNumber(value, 2)}`).join(" / ");
+                          return `${population.speciesName}: ${traits}`;
+                        }).join(", ") || "None"}</p>
+                        <p>Biggest weaknesses {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 3).map((population) => {
+                          const traits = Object.entries(population.adaptationProfile).sort((left, right) => left[1] - right[1]).slice(0, 2).map(([trait, value]) => `${titleize(trait)} ${formatNumber(value, 2)}`).join(" / ");
+                          return `${population.speciesName}: ${traits}`;
+                        }).join(", ") || "None"}</p>
+                        {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 4).map((population) => {
+                          const trend = population.adaptationTrends.find((entry) => entry.direction !== "Stable") ?? population.adaptationTrends[0];
+                          return (
+                            <div key={`${population.speciesId}-adaptation`} className="mt-2 border-t border-white/10 pt-2">
+                              <p className="text-stone-100">{population.speciesName}</p>
+                              <p>Cold Tolerance <HealthBar value={population.adaptationProfile.coldTolerance} /> {formatNumber(population.adaptationProfile.coldTolerance, 2)}</p>
+                              <p>Heat Tolerance <HealthBar value={population.adaptationProfile.heatTolerance} /> {formatNumber(population.adaptationProfile.heatTolerance, 2)}</p>
+                              <p>Drought Tolerance <HealthBar value={population.adaptationProfile.droughtTolerance} /> {formatNumber(population.adaptationProfile.droughtTolerance, 2)}</p>
+                              <p>Foraging Efficiency <HealthBar value={population.adaptationProfile.foragingEfficiency} /> {formatNumber(population.adaptationProfile.foragingEfficiency, 2)}</p>
+                              <p>Trend: {trend?.direction ?? "Stable"}</p>
+                              <p>Reason: {trend?.reason ?? "Stable local pressure."}</p>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                     <LayerStatusCard label="Civilizations" value="Civilization Systems Not Generated Yet" />

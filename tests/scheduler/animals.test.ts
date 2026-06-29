@@ -185,8 +185,9 @@ describe("animal ecology foundation", () => {
     const labels = DEFAULT_SIMULATION_SYSTEMS.map((system) => system.label);
 
     expect(labels.indexOf("Plant Ecology")).toBeLessThan(labels.indexOf("Animals"));
-    expect(labels.indexOf("Animals")).toBeLessThan(labels.indexOf("Humans"));
-    expect(labels.indexOf("Animals")).toBeLessThan(labels.indexOf("Civilization"));
+    expect(labels.indexOf("Animals")).toBeLessThan(labels.indexOf("Population Adaptation"));
+    expect(labels.indexOf("Population Adaptation")).toBeLessThan(labels.indexOf("Humans"));
+    expect(labels.indexOf("Population Adaptation")).toBeLessThan(labels.indexOf("Civilization"));
 
     const grid = createGrid();
     const plantState = getPlantEcologyState(baseWorld, grid);
@@ -303,12 +304,154 @@ describe("animal ecology foundation", () => {
     expect(spring.summary.totalWildlifePopulation).toBeGreaterThan(0);
   });
 
+
+
+  it("moves populations gradually between neighboring cells while conserving migration deltas", () => {
+    const grid = createGrid();
+    const animals = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const outboundVectors = animals.cells.flatMap((cell) => cell.movementVectors.filter((vector) => vector.fromCellId === cell.id));
+    const netMigrationBySpecies = new Map<string, number>();
+
+    expect(outboundVectors.length).toBeGreaterThan(0);
+    expect(outboundVectors.reduce((total, vector) => total + vector.population, 0) / animals.summary.totalWildlifePopulation).toBeLessThan(0.02);
+
+    for (const vector of outboundVectors) {
+      const neighborIds = new Set(grid.getNeighbors(vector.fromCellId).map((neighbor) => neighbor.id));
+      expect(neighborIds.has(vector.toCellId)).toBe(true);
+      expect(vector.population).toBeGreaterThan(0);
+    }
+
+    for (const population of animals.cells.flatMap((cell) => cell.animalPopulations)) {
+      netMigrationBySpecies.set(population.speciesId, (netMigrationBySpecies.get(population.speciesId) ?? 0) + population.netMigration);
+    }
+
+    expect([...netMigrationBySpecies.values()].every((netMigration) => netMigration === 0)).toBe(true);
+  });
+
+  it("links plant consumption to food stability and records vegetation recovery events", () => {
+    const animals = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const heavyConsumption = animals.cells.filter((cell) => cell.plantConsumptionRate >= 0.58);
+    const recoveryEvents = animals.cells.flatMap((cell) => cell.ecosystemEvents).filter((event) => event.type === "Vegetation Recovery" || event.type === "Flood Recovery");
+
+    expect(heavyConsumption.length).toBeGreaterThan(0);
+    expect(recoveryEvents.length).toBeGreaterThan(0);
+    expect(heavyConsumption.every((cell) => cell.effectivePlantBiomass <= cell.biomassScore + cell.regrowthRate * 0.16)).toBe(true);
+    expect(average(heavyConsumption.map((cell) => cell.foodStability))).toBeLessThan(average(animals.cells.map((cell) => Math.max(cell.foodStability, 0.001))));
+    expect(animals.summary.plantConsumptionRate).toBeGreaterThan(0);
+    expect(animals.summary.foodStability).toBeGreaterThan(0);
+  });
+
+  it("applies predator pressure as a population trend cost for herbivores", () => {
+    const animals = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const herbivores = animals.cells.flatMap((cell) => cell.animalPopulations).filter((population) => population.trophicLevel === "Herbivore" && population.population > 0);
+    const highPredation = herbivores.filter((population) => population.predationPressure >= 0.4);
+    const lowPredation = herbivores.filter((population) => population.predationPressure <= 0.12);
+
+    expect(highPredation.length).toBeGreaterThan(0);
+    expect(lowPredation.length).toBeGreaterThan(0);
+    expect(average(highPredation.map((population) => population.populationTrend))).toBeLessThan(average(lowPredation.map((population) => population.populationTrend)));
+    expect(animals.summary.predatorBalance).toBeGreaterThanOrEqual(0);
+    expect(animals.summary.predatorBalance).toBeLessThanOrEqual(1);
+  });
+
+  it("changes migration activity across seasons deterministically", () => {
+    const spring = getAnimalEcologyState({ ...baseWorld, currentTick: 90n });
+    const lateSeason = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const springVectors = spring.cells.flatMap((cell) => cell.movementVectors.filter((vector) => vector.fromCellId === cell.id));
+    const lateSeasonVectors = lateSeason.cells.flatMap((cell) => cell.movementVectors.filter((vector) => vector.fromCellId === cell.id));
+
+    expect(springVectors.length).toBeGreaterThan(0);
+    expect(lateSeasonVectors.length).toBeGreaterThan(springVectors.length);
+    expect(lateSeason.summary.migrationActivity).toBeGreaterThan(0);
+  });
+
+  it("records deterministic ecosystem health statuses, events, and history", () => {
+    const first = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const second = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
+    const statuses = new Set(first.cells.map((cell) => cell.ecosystemHealthStatus));
+    const eventTypes = new Set(first.cells.flatMap((cell) => cell.ecosystemEvents.map((event) => event.type)));
+
+    expect(statuses.size).toBeGreaterThan(1);
+    expect(eventTypes.has("Migration Wave")).toBe(true);
+    expect(eventTypes.has("Predator Expansion")).toBe(true);
+    expect(first.cells.every((cell) => cell.ecosystemHistory.length >= 4)).toBe(true);
+    expect(first.cells.map((cell) => cell.ecosystemHistory.map((event) => event.id))).toEqual(second.cells.map((cell) => cell.ecosystemHistory.map((event) => event.id)));
+  });
+
   it("serializes animal populations into atlas snapshots", () => {
-    const snapshot = buildAtlasSnapshot(baseWorld as never, 1);
+    const snapshot = buildAtlasSnapshot(baseWorld as never, 2);
     const populated = snapshot.cells.find((cell) => cell.totalWildlifePopulation > 0);
 
     expect(populated).toBeTruthy();
     expect(populated?.animalPopulations.length).toBeGreaterThan(0);
     expect(populated?.dominantSpeciesId).not.toBe("none");
+    expect(populated?.ecosystemHealthScore).toBeGreaterThan(0);
+    expect(populated?.ecosystemHistory.length).toBeGreaterThanOrEqual(4);
+    expect(snapshot.cells.some((cell) => cell.movementVectors.length > 0)).toBe(true);
+  });
+
+  it("adapts populations slowly toward matching environmental pressures", () => {
+    const early = getAnimalEcologyState({ ...baseWorld, currentTick: 1n });
+    const mature = getAnimalEcologyState({ ...baseWorld, currentTick: 12_000n });
+    const coldCell = mature.cells.find((cell) => cell.adjustedTemperatureC <= 5 && cell.animalPopulations.some((population) => population.population > 0));
+
+    expect(coldCell).toBeTruthy();
+    const maturePopulation = coldCell!.animalPopulations.find((population) => population.population > 0)!;
+    const earlyPopulation = early.cells.find((cell) => cell.id === coldCell!.id)?.animalPopulations.find((population) => population.speciesId === maturePopulation.speciesId);
+
+    expect(earlyPopulation).toBeTruthy();
+    expect(maturePopulation.adaptationProfile.coldTolerance).toBeGreaterThanOrEqual(earlyPopulation!.adaptationProfile.coldTolerance);
+    expect(maturePopulation.adaptationTrends.some((trend) => trend.trait === "coldTolerance")).toBe(true);
+    expect(Object.values(maturePopulation.adaptationProfile).every((value) => value >= 0 && value <= 1)).toBe(true);
+  });
+
+  it("keeps opposite-environment adaptation pressure distinct", () => {
+    const cold = getAnimalEcologyState({ ...baseWorld, currentTick: 12_000n });
+    const dry = getAnimalEcologyState({ ...hotDryWorld, currentTick: 12_000n });
+    const coldPopulation = cold.cells.flatMap((cell) => cell.animalPopulations).find((population) => population.population > 0 && population.adaptationProfile.coldTolerance >= 0.58);
+    const dryPopulation = dry.cells.flatMap((cell) => cell.animalPopulations).find((population) => population.population > 0 && population.adaptationProfile.droughtTolerance >= 0.58);
+
+    expect(coldPopulation).toBeTruthy();
+    expect(dryPopulation).toBeTruthy();
+    expect(dryPopulation!.adaptationProfile.droughtTolerance).toBeGreaterThan(dryPopulation!.adaptationProfile.coldTolerance);
+    expect(coldPopulation!.adaptationProfile.coldTolerance).toBeGreaterThan(coldPopulation!.adaptationProfile.heatTolerance);
+  });
+
+  it("calculates fitness and lets adaptation improve population outcomes", () => {
+    const early = getAnimalEcologyState({ ...baseWorld, currentTick: 1n });
+    const mature = getAnimalEcologyState({ ...baseWorld, currentTick: 10_000n });
+    const cell = mature.cells.find((candidate) => candidate.totalWildlifePopulation > 0 && candidate.averageFitness > 0.4);
+    const maturePopulation = cell?.animalPopulations.find((population) => population.population > 0);
+    const earlyPopulation = cell ? early.cells.find((candidate) => candidate.id === cell.id)?.animalPopulations.find((population) => population.speciesId === maturePopulation?.speciesId) : null;
+
+    expect(cell).toBeTruthy();
+    expect(maturePopulation).toBeTruthy();
+    expect(earlyPopulation).toBeTruthy();
+    expect(maturePopulation!.fitnessScore).toBeGreaterThan(0);
+    expect(maturePopulation!.fitnessScore).toBeLessThanOrEqual(1);
+    expect(maturePopulation!.population).toBeGreaterThanOrEqual(earlyPopulation!.population);
+  });
+
+  it("uses migration instinct in migration pressure and records adaptation milestones", () => {
+    const mature = getAnimalEcologyState({ ...baseWorld, currentTick: 12_000n });
+    const populations = mature.cells.flatMap((cell) => cell.animalPopulations).filter((population) => population.population > 0);
+    const highMigration = populations.filter((population) => population.adaptationProfile.migrationInstinct >= 0.56);
+    const lowMigration = populations.filter((population) => population.adaptationProfile.migrationInstinct <= 0.44);
+    const adaptationEvents = mature.cells.flatMap((cell) => cell.ecosystemHistory).filter((event) => event.type === "Adaptation Milestone");
+
+    expect(highMigration.length).toBeGreaterThan(0);
+    expect(lowMigration.length).toBeGreaterThan(0);
+    expect(average(highMigration.map((population) => population.migrationPressure))).toBeGreaterThanOrEqual(average(lowMigration.map((population) => population.migrationPressure)));
+    expect(adaptationEvents.length).toBeGreaterThan(0);
+  });
+
+  it("serializes adaptation into atlas snapshots for overlays and inspectors", () => {
+    const snapshot = buildAtlasSnapshot({ ...baseWorld, currentTick: 10_000n } as never, 2);
+    const adapted = snapshot.cells.find((cell) => cell.averageFitness > 0 && cell.animalPopulations.some((population) => population.population > 0));
+
+    expect(adapted).toBeTruthy();
+    expect(adapted?.averageClimateAdaptation).toBeGreaterThan(0);
+    expect(adapted?.animalPopulations[0]?.adaptationProfile.coldTolerance).toBeGreaterThanOrEqual(0);
+    expect(adapted?.animalPopulations[0]?.adaptationTrends.length).toBeGreaterThan(0);
   });
 });

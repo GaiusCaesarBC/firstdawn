@@ -134,3 +134,15 @@ Systems emit domain events through the engine-owned event bus or return them fro
 * Emit events instead of calling other systems.
 * Report metrics and health diagnostics where practical.
 * Preserve deterministic outputs when refactoring existing formulas.
+
+## Population Adaptation Foundation
+
+Population adaptation is registered as the `adaptation` simulation plugin at order `115`, after `animals` and before human/civilization placeholders. It uses the standard `SimulationSystem` interface and does not require scheduler changes.
+
+The animal population layer owns the deterministic per-cell population equations and persists `AnimalPopulation` rows. The adaptation plugin owns the adaptation system boundary: it consumes the deterministic ecology output from climate, weather, biome, plants, animals, migration, and ecosystem health; reports adaptation health/metrics; and emits adaptation history events through the scheduler event bus.
+
+`AnimalPopulation.adaptationProfile`, `adaptationTrends`, and `fitnessScore` are population-level state only. Species defaults in `animal-definitions.ts` are never overwritten, and no DNA, mutation, speciation, intelligence, language, or civilization behavior is introduced by this foundation. Future evolution systems should treat these values as long-running population deltas/effective profiles that can be read without changing the species catalog.
+
+Fitness is a bounded multiplier-style score derived from habitat suitability, food availability, population health, climate stress, migration pressure, predation pressure, and the adaptation profile. Existing animal equations remain the base model; adaptation nudges reproduction, mortality, migration pressure, health, and long-term stability slowly over thousands of ticks.
+
+Adaptation milestones are deterministic. Significant threshold crossings become `Population Adaptation` events in the scheduler event stream and are also visible in cell ecosystem history for atlas and inspector views. The World Health and Planet Atlas surfaces expose average fitness, adaptation diversity, climate adaptation, disease resistance, reproductive efficiency, strongest populations, weakest populations, and dedicated adaptation overlays.

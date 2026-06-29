@@ -277,6 +277,10 @@ describe("world map atlas ui", () => {
     expect(panel.textContent).toContain("Average seasonal stress");
     expect(panel.textContent).toContain("Animals");
     expect(panel.textContent).toContain("Total population");
+    expect(panel.textContent).toContain("Food stability");
+    expect(panel.textContent).toContain("Plant consumption");
+    expect(panel.textContent).toContain("Top Species");
+    expect(panel.textContent).toContain("Influencing Systems");
     expect(panel.textContent).toContain("Civilization Systems Not Generated Yet");
     expect(panel.textContent).not.toContain("Reserved atlas slot");
 
@@ -304,6 +308,8 @@ describe("world map atlas ui", () => {
       expect(panel.textContent).toContain(firstCell.dominantPlantName);
       expect(panel.textContent).toContain("Suitability");
       expect(panel.textContent).toContain("Seasonal stress");
+      expect(panel.textContent).toContain("Recent History");
+      expect(screen.getByTestId("cell-inspector").textContent).toContain("Adaptation");
     });
 
     clickCell(initialSnapshot, secondCell.id);

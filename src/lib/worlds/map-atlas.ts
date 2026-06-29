@@ -172,6 +172,27 @@ export type AtlasCell = ClimateGridCell & Pick<
   totalWildlifePopulation: number;
   averagePopulationHealth: number;
   averageHabitatSuitability: number;
+  plantConsumptionRate: number;
+  effectivePlantBiomass: number;
+  predationPressure: number;
+  predatorPreyBalance: number;
+  foodStability: number;
+  carryingCapacityUsage: number;
+  migrationActivity: number;
+  populationGrowthRate: number;
+  ecosystemHealthScore: number;
+  ecosystemHealthStatus: AnimalGridCell["ecosystemHealthStatus"];
+  averageFitness: number;
+  adaptationDiversity: number;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
+  highestAdaptedPopulation: AnimalGridCell["highestAdaptedPopulation"];
+  lowestFitnessPopulation: AnimalGridCell["lowestFitnessPopulation"];
+  ecosystemEvents: AnimalGridCell["ecosystemEvents"];
+  ecosystemHistory: AnimalGridCell["ecosystemHistory"];
+  movementVectors: AnimalGridCell["movementVectors"];
   animalPopulations: AnimalGridCell["animalPopulations"];
 };
 
@@ -418,6 +439,27 @@ function combineAtlasCells(
       totalWildlifePopulation: animalCell?.totalWildlifePopulation ?? 0,
       averagePopulationHealth: animalCell?.averagePopulationHealth ?? 0,
       averageHabitatSuitability: animalCell?.averageHabitatSuitability ?? 0,
+      plantConsumptionRate: animalCell?.plantConsumptionRate ?? 0,
+      effectivePlantBiomass: animalCell?.effectivePlantBiomass ?? 0,
+      predationPressure: animalCell?.predationPressure ?? 0,
+      predatorPreyBalance: animalCell?.predatorPreyBalance ?? 0,
+      foodStability: animalCell?.foodStability ?? 0,
+      carryingCapacityUsage: animalCell?.carryingCapacityUsage ?? 0,
+      migrationActivity: animalCell?.migrationActivity ?? 0,
+      populationGrowthRate: animalCell?.populationGrowthRate ?? 0,
+      ecosystemHealthScore: animalCell?.ecosystemHealthScore ?? 0,
+      ecosystemHealthStatus: animalCell?.ecosystemHealthStatus ?? "Collapsed",
+      averageFitness: animalCell?.averageFitness ?? 0,
+      adaptationDiversity: animalCell?.adaptationDiversity ?? 0,
+      averageMigrationInstinct: animalCell?.averageMigrationInstinct ?? 0,
+      averageDiseaseResistance: animalCell?.averageDiseaseResistance ?? 0,
+      averageReproductiveEfficiency: animalCell?.averageReproductiveEfficiency ?? 0,
+      averageClimateAdaptation: animalCell?.averageClimateAdaptation ?? 0,
+      highestAdaptedPopulation: animalCell?.highestAdaptedPopulation ?? null,
+      lowestFitnessPopulation: animalCell?.lowestFitnessPopulation ?? null,
+      ecosystemEvents: [...(animalCell?.ecosystemEvents ?? [])],
+      ecosystemHistory: [...(animalCell?.ecosystemHistory ?? [])],
+      movementVectors: [...(animalCell?.movementVectors ?? [])],
       animalPopulations: [...(animalCell?.animalPopulations ?? [])],
     }];
   });

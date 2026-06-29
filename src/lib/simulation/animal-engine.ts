@@ -18,6 +18,39 @@ import {
 
 export type DominantAnimalGuildKey = AnimalGuildKey;
 
+export type EcosystemHealthStatus = "Excellent" | "Healthy" | "Stressed" | "Collapsing" | "Collapsed";
+
+export type EcosystemEventType =
+  | "Population Boom"
+  | "Population Collapse"
+  | "Food Shortage"
+  | "Migration Wave"
+  | "Overgrazing"
+  | "Habitat Recovery"
+  | "Predator Expansion"
+  | "Predator Decline"
+  | "Vegetation Recovery"
+  | "Drought Stress"
+  | "Flood Recovery"
+  | "Adaptation Milestone";
+
+export type EcosystemEvent = {
+  readonly id: string;
+  readonly tick: string;
+  readonly type: EcosystemEventType;
+  readonly severity: number;
+  readonly description: string;
+  readonly speciesId?: string;
+};
+
+export type AnimalMovementVector = {
+  readonly speciesId: string;
+  readonly fromCellId: string;
+  readonly toCellId: string;
+  readonly population: number;
+  readonly pressure: number;
+};
+
 export type AnimalPopulationState = {
   readonly speciesId: string;
   readonly speciesName: string;
@@ -29,7 +62,59 @@ export type AnimalPopulationState = {
   readonly migrationPressure: number;
   readonly habitatSuitability: number;
   readonly carryingCapacity: number;
+  readonly predationPressure: number;
+  readonly competitionPressure: number;
+  readonly carryingCapacityUsage: number;
+  readonly inboundMigration: number;
+  readonly outboundMigration: number;
+  readonly netMigration: number;
+  readonly populationTrend: number;
+  readonly fitnessScore: number;
+  readonly adaptationProfile: AdaptationProfile;
+  readonly adaptationTrends: readonly AdaptationTrend[];
   readonly lastUpdatedTick: string;
+};
+
+export const ADAPTATION_TRAITS = Object.freeze([
+  "coldTolerance",
+  "heatTolerance",
+  "droughtTolerance",
+  "floodTolerance",
+  "humidityTolerance",
+  "altitudeTolerance",
+  "diseaseResistance",
+  "parasiteResistance",
+  "reproductiveEfficiency",
+  "juvenileSurvival",
+  "longevity",
+  "metabolismEfficiency",
+  "foragingEfficiency",
+  "predatorAwareness",
+  "camouflage",
+  "migrationInstinct",
+  "socialBehavior",
+  "territorialBehavior",
+  "stressResistance",
+  "intelligencePotential",
+] as const);
+
+export type AdaptationTrait = (typeof ADAPTATION_TRAITS)[number];
+export type AdaptationProfile = Readonly<Record<AdaptationTrait, number>>;
+export type AdaptationTrendDirection = "Increasing" | "Decreasing" | "Stable";
+
+export type AdaptationTrend = {
+  readonly trait: AdaptationTrait;
+  readonly value: number;
+  readonly previousValue: number;
+  readonly direction: AdaptationTrendDirection;
+  readonly reason: string;
+};
+
+export type PopulationAdaptationSummary = {
+  readonly speciesId: string;
+  readonly speciesName: string;
+  readonly score: number;
+  readonly trait?: AdaptationTrait;
 };
 
 export type AnimalGridCell = PlantGridCell & {
@@ -55,6 +140,27 @@ export type AnimalGridCell = PlantGridCell & {
   readonly totalWildlifePopulation: number;
   readonly averagePopulationHealth: number;
   readonly averageHabitatSuitability: number;
+  readonly plantConsumptionRate: number;
+  readonly effectivePlantBiomass: number;
+  readonly predationPressure: number;
+  readonly predatorPreyBalance: number;
+  readonly foodStability: number;
+  readonly carryingCapacityUsage: number;
+  readonly migrationActivity: number;
+  readonly populationGrowthRate: number;
+  readonly ecosystemHealthScore: number;
+  readonly ecosystemHealthStatus: EcosystemHealthStatus;
+  readonly averageFitness: number;
+  readonly adaptationDiversity: number;
+  readonly averageMigrationInstinct: number;
+  readonly averageDiseaseResistance: number;
+  readonly averageReproductiveEfficiency: number;
+  readonly averageClimateAdaptation: number;
+  readonly highestAdaptedPopulation: PopulationAdaptationSummary | null;
+  readonly lowestFitnessPopulation: PopulationAdaptationSummary | null;
+  readonly ecosystemEvents: readonly EcosystemEvent[];
+  readonly ecosystemHistory: readonly EcosystemEvent[];
+  readonly movementVectors: readonly AnimalMovementVector[];
   readonly animalPopulations: readonly AnimalPopulationState[];
 };
 
@@ -93,6 +199,22 @@ export type AnimalSummary = {
   readonly totalWildlifePopulation: number;
   readonly averageHabitatSuitability: number;
   readonly averageHealth: number;
+  readonly averageEcosystemHealth: number;
+  readonly averageBiodiversity: number;
+  readonly migrationActivity: number;
+  readonly foodStability: number;
+  readonly predatorBalance: number;
+  readonly collapsedHabitats: number;
+  readonly populationGrowthRate: number;
+  readonly plantConsumptionRate: number;
+  readonly averageFitness: number;
+  readonly averageAdaptationDiversity: number;
+  readonly highestAdaptedPopulation: PopulationAdaptationSummary | null;
+  readonly lowestFitnessPopulation: PopulationAdaptationSummary | null;
+  readonly averageMigrationInstinct: number;
+  readonly averageDiseaseResistance: number;
+  readonly averageReproductiveEfficiency: number;
+  readonly averageClimateAdaptation: number;
   readonly herbivoreRichRegions: readonly AnimalRegion[];
   readonly predatorHotspots: readonly AnimalRegion[];
   readonly huntingValueRegions: readonly AnimalRegion[];
@@ -119,7 +241,7 @@ export type PersistAnimalEcologyResult = {
 
 type TickInput = bigint | number | string;
 
-type AnimalWorldSource = Pick<
+export type AnimalWorldSource = Pick<
   World,
   | "id"
   | "seed"
@@ -150,6 +272,16 @@ type AnimalPopulationPersistencePayload = {
   readonly migrationPressure: number;
   readonly habitatSuitability: number;
   readonly carryingCapacity: number;
+  readonly predationPressure: number;
+  readonly competitionPressure: number;
+  readonly carryingCapacityUsage: number;
+  readonly inboundMigration: number;
+  readonly outboundMigration: number;
+  readonly netMigration: number;
+  readonly populationTrend: number;
+  readonly fitnessScore: number;
+  readonly adaptationProfile: Prisma.InputJsonValue;
+  readonly adaptationTrends: Prisma.InputJsonValue;
   readonly lastUpdatedTick: bigint;
 };
 
@@ -190,6 +322,27 @@ type PersistedAnimalCellExtras = {
   readonly totalWildlifePopulation?: number;
   readonly averageAnimalHealth?: number;
   readonly averageHabitatSuitability?: number;
+  readonly plantConsumptionRate?: number;
+  readonly effectivePlantBiomass?: number;
+  readonly predationPressure?: number;
+  readonly predatorPreyBalance?: number;
+  readonly foodStability?: number;
+  readonly carryingCapacityUsage?: number;
+  readonly migrationActivity?: number;
+  readonly populationGrowthRate?: number;
+  readonly averageFitness?: number;
+  readonly adaptationDiversity?: number;
+  readonly averageMigrationInstinct?: number;
+  readonly averageDiseaseResistance?: number;
+  readonly averageReproductiveEfficiency?: number;
+  readonly averageClimateAdaptation?: number;
+  readonly highestAdaptedPopulation?: Prisma.JsonValue;
+  readonly lowestFitnessPopulation?: Prisma.JsonValue;
+  readonly ecosystemHealthScore?: number;
+  readonly ecosystemHealthStatus?: string;
+  readonly ecosystemEvents?: Prisma.JsonValue;
+  readonly ecosystemHistory?: Prisma.JsonValue;
+  readonly movementVectors?: Prisma.JsonValue;
 };
 
 const UINT32_RANGE = 4_294_967_296;
@@ -198,6 +351,8 @@ const AQUATIC_GUILDS = new Set<AnimalGuildKey>(["aquatic-microfauna", "fish"]);
 const HERBIVORE_GUILDS = new Set<AnimalGuildKey>(["small-herbivores", "large-herbivores", "browsers", "grazers"]);
 const PREDATOR_GUILDS = new Set<AnimalGuildKey>(["small-predators", "apex-predators", "reptiles"]);
 const LOW_DENSITY_BIOMES = new Set<BiomeKey>(["ice-sheet", "volcanic-barren", "badlands-rocky", "alpine-mountain", "desert"]);
+const MIGRATION_PRESSURE_THRESHOLD = 0.14;
+const MAX_MIGRATION_FRACTION_PER_TICK = 0.08;
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -210,6 +365,257 @@ function round(value: number, digits = 6): number {
 
 function average(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0) / Math.max(values.length, 1);
+}
+
+type AdaptationPressure = AdaptationProfile;
+
+const ADAPTATION_EXPOSURE_TICKS = 12_000;
+const ADAPTATION_TREND_WINDOW_TICKS = 180n;
+const TRAIT_BASELINE_MINIMUM = 0.34;
+const TRAIT_BASELINE_SPAN = 0.32;
+const CLIMATE_ADAPTATION_TRAITS: readonly AdaptationTrait[] = [
+  "coldTolerance",
+  "heatTolerance",
+  "droughtTolerance",
+  "floodTolerance",
+  "humidityTolerance",
+  "altitudeTolerance",
+  "stressResistance",
+];
+
+const ADAPTATION_LABELS: Record<AdaptationTrait, string> = {
+  coldTolerance: "Cold tolerance",
+  heatTolerance: "Heat tolerance",
+  droughtTolerance: "Drought tolerance",
+  floodTolerance: "Flood tolerance",
+  humidityTolerance: "Humidity tolerance",
+  altitudeTolerance: "Altitude tolerance",
+  diseaseResistance: "Disease resistance",
+  parasiteResistance: "Parasite resistance",
+  reproductiveEfficiency: "Reproductive efficiency",
+  juvenileSurvival: "Juvenile survival",
+  longevity: "Longevity",
+  metabolismEfficiency: "Metabolism efficiency",
+  foragingEfficiency: "Foraging efficiency",
+  predatorAwareness: "Predator awareness",
+  camouflage: "Camouflage",
+  migrationInstinct: "Migration instinct",
+  socialBehavior: "Social behavior",
+  territorialBehavior: "Territorial behavior",
+  stressResistance: "Stress resistance",
+  intelligencePotential: "Intelligence potential",
+};
+
+function emptyAdaptationProfile(value: number): AdaptationProfile {
+  return Object.freeze(Object.fromEntries(ADAPTATION_TRAITS.map((trait) => [trait, round(clamp(value))])) as Record<AdaptationTrait, number>);
+}
+
+function speciesTraitBaseline(definition: AnimalSpeciesDefinition, trait: AdaptationTrait, seed: string): number {
+  const seeded = TRAIT_BASELINE_MINIMUM + hashUnit(seed, `${definition.id}:${trait}:adaptation-baseline`) * TRAIT_BASELINE_SPAN;
+  const tags = definition.tags;
+  const tagBonus =
+    (trait === "coldTolerance" && (tags.includes("cold-adapted") || tags.includes("polar"))) ? 0.16
+      : (trait === "heatTolerance" && (tags.includes("desert") || tags.includes("dryland") || tags.includes("warm-adapted"))) ? 0.14
+        : (trait === "droughtTolerance" && (tags.includes("water-efficient") || tags.includes("dryland") || tags.includes("desert"))) ? 0.16
+          : (trait === "migrationInstinct" && tags.includes("migration")) ? 0.16
+            : (trait === "socialBehavior" && (tags.includes("herd") || tags.includes("pack") || tags.includes("pride"))) ? 0.14
+              : (trait === "predatorAwareness" && tags.includes("prey")) ? 0.12
+                : (trait === "foragingEfficiency" && (tags.includes("omnivore") || tags.includes("browser") || tags.includes("grazer"))) ? 0.1
+                  : (trait === "altitudeTolerance" && (tags.includes("mountain") || tags.includes("sure-footed"))) ? 0.12
+                    : (trait === "camouflage" && (tags.includes("ambush") || tags.includes("burrower"))) ? 0.1
+                      : 0;
+
+  return round(clamp(seeded + tagBonus));
+}
+
+function getAdaptationExposure(tick: bigint): number {
+  const elapsed = Math.max(0, Number(tick));
+
+  return round(clamp(1 - Math.exp(-elapsed / ADAPTATION_EXPOSURE_TICKS)));
+}
+
+function getFoodStabilityPressure(cell: PlantGridCell): number {
+  return round(clamp(
+    cell.ediblePlantScore * 0.34
+      + cell.biomassScore * 0.22
+      + cell.regrowthRate * 0.18
+      + cell.plantDensity * 0.14
+      + (1 - cell.seasonalStressScore) * 0.12,
+  ));
+}
+
+function getAdaptationPressure(cell: PlantGridCell, values: { readonly herbivores: number; readonly prey: number; readonly carrying: number }, migrationFrequency: number): AdaptationPressure {
+  const coldPressure = clamp((10 - cell.adjustedTemperatureC) / 36 + cell.seasonalityScore * 0.22 + (cell.biomeKey === "ice-sheet" || cell.biomeKey === "tundra" ? 0.18 : 0));
+  const heatPressure = clamp((cell.adjustedTemperatureC - 18) / 30 + (1 - cell.precipitationScore) * 0.12 + (cell.biomeKey === "desert" ? 0.16 : 0));
+  const droughtPressure = clamp((1 - cell.waterAvailabilityScore) * 0.36 + (1 - cell.precipitationScore) * 0.34 + (1 - cell.soilMoistureScore) * 0.18 + heatPressure * 0.12);
+  const floodPressure = clamp(cell.waterAvailabilityScore * 0.36 + cell.precipitationScore * 0.24 + cell.soilMoistureScore * 0.18 + (cell.biomeCategory === "wetland" ? 0.2 : 0));
+  const humidityPressure = clamp(cell.humidityScore * 0.62 + cell.precipitationScore * 0.22 + cell.soilMoistureScore * 0.16);
+  const altitudePressure = clamp(Math.max(0, cell.elevation - 0.42) * 1.45 + (cell.biomeKey === "alpine-mountain" ? 0.18 : 0));
+  const foodStability = getFoodStabilityPressure(cell);
+  const predatorPressure = clamp(values.prey * 0.34 + (1 - values.herbivores) * 0.12);
+  const competitionPressure = clamp(1 - values.carrying);
+  const waterStress = clamp(1 - cell.waterAvailabilityScore);
+
+  return Object.freeze({
+    coldTolerance: round(coldPressure),
+    heatTolerance: round(heatPressure),
+    droughtTolerance: round(droughtPressure),
+    floodTolerance: round(floodPressure),
+    humidityTolerance: round(humidityPressure),
+    altitudeTolerance: round(altitudePressure),
+    diseaseResistance: round(clamp(humidityPressure * 0.34 + values.prey * 0.18 + cell.biodiversityScore * 0.12 + cell.seasonalStressScore * 0.16)),
+    parasiteResistance: round(clamp(humidityPressure * 0.42 + heatPressure * 0.18 + values.prey * 0.12)),
+    reproductiveEfficiency: round(clamp(foodStability * 0.42 + cell.habitabilityScore * 0.28 + (1 - cell.seasonalStressScore) * 0.2 + values.carrying * 0.1)),
+    juvenileSurvival: round(clamp(foodStability * 0.34 + cell.waterAvailabilityScore * 0.22 + (1 - predatorPressure) * 0.24 + (1 - cell.seasonalStressScore) * 0.2)),
+    longevity: round(clamp((1 - cell.seasonalStressScore) * 0.32 + foodStability * 0.24 + cell.habitabilityScore * 0.22 + (1 - competitionPressure) * 0.22)),
+    metabolismEfficiency: round(clamp((coldPressure + heatPressure + droughtPressure) * 0.26 + (1 - foodStability) * 0.2 + cell.seasonalityScore * 0.18)),
+    foragingEfficiency: round(clamp(foodStability * 0.38 + cell.biodiversityScore * 0.22 + cell.ediblePlantScore * 0.18 + values.prey * 0.14 + competitionPressure * 0.08)),
+    predatorAwareness: round(clamp(predatorPressure * 0.58 + values.prey * 0.18 + migrationFrequency * 0.1)),
+    camouflage: round(clamp(cell.vegetationDensity * 0.24 + cell.elevation * 0.12 + predatorPressure * 0.3 + cell.biomeColor.length / 16 * 0.06)),
+    migrationInstinct: round(clamp(migrationFrequency * 0.48 + cell.seasonalityScore * 0.24 + waterStress * 0.14 + (1 - foodStability) * 0.14)),
+    socialBehavior: round(clamp(values.herbivores * 0.3 + predatorPressure * 0.18 + competitionPressure * 0.16 + cell.habitabilityScore * 0.12)),
+    territorialBehavior: round(clamp(values.carrying * 0.24 + foodStability * 0.18 + predatorPressure * 0.16 + (1 - migrationFrequency) * 0.18)),
+    stressResistance: round(clamp(cell.seasonalStressScore * 0.34 + coldPressure * 0.16 + heatPressure * 0.16 + droughtPressure * 0.14 + competitionPressure * 0.1)),
+    intelligencePotential: round(clamp(cell.biodiversityScore * 0.2 + cell.seasonalityScore * 0.16 + values.prey * 0.16 + competitionPressure * 0.14 + predatorPressure * 0.12)),
+  });
+}
+
+function buildAdaptationProfile(definition: AnimalSpeciesDefinition, pressure: AdaptationPressure, seed: string, tick: bigint): AdaptationProfile {
+  const exposure = getAdaptationExposure(tick);
+
+  return Object.freeze(Object.fromEntries(ADAPTATION_TRAITS.map((trait) => {
+    const baseline = speciesTraitBaseline(definition, trait, seed);
+    const target = pressure[trait];
+
+    return [trait, round(clamp(baseline + (target - baseline) * exposure))];
+  })) as Record<AdaptationTrait, number>);
+}
+
+function adaptationReason(trait: AdaptationTrait, pressure: AdaptationPressure): string {
+  switch (trait) {
+    case "coldTolerance":
+      return pressure.coldTolerance >= 0.5 ? "Persistent cold winters." : "Warmer conditions reduced cold pressure.";
+    case "heatTolerance":
+      return pressure.heatTolerance >= 0.5 ? "Persistent heat exposure." : "Cooler conditions reduced heat pressure.";
+    case "droughtTolerance":
+      return pressure.droughtTolerance >= 0.5 ? "Low rainfall and water scarcity." : "Reliable water reduced drought pressure.";
+    case "floodTolerance":
+      return pressure.floodTolerance >= 0.5 ? "Wet or flood-prone habitat." : "Dryer ground reduced flood pressure.";
+    case "foragingEfficiency":
+      return pressure.foragingEfficiency >= 0.5 ? "Food access shaped stronger foraging." : "Food pressure weakened.";
+    case "migrationInstinct":
+      return pressure.migrationInstinct >= 0.5 ? "Seasonal or resource instability favored movement." : "Stable local habitat weakened movement pressure.";
+    case "predatorAwareness":
+      return pressure.predatorAwareness >= 0.5 ? "Predator pressure remained high." : "Predator pressure eased.";
+    default:
+      return pressure[trait] >= 0.5 ? "Persistent local environmental pressure." : "Local pressure eased.";
+  }
+}
+
+function buildAdaptationTrends(definition: AnimalSpeciesDefinition, pressure: AdaptationPressure, seed: string, tick: bigint, profile: AdaptationProfile): readonly AdaptationTrend[] {
+  const previousTick = tick > ADAPTATION_TREND_WINDOW_TICKS ? tick - ADAPTATION_TREND_WINDOW_TICKS : 0n;
+  const previousProfile = buildAdaptationProfile(definition, pressure, seed, previousTick);
+
+  return Object.freeze(ADAPTATION_TRAITS.map((trait) => {
+    const delta = profile[trait] - previousProfile[trait];
+    const direction: AdaptationTrendDirection = Math.abs(delta) < 0.0005 ? "Stable" : delta > 0 ? "Increasing" : "Decreasing";
+
+    return Object.freeze({
+      trait,
+      value: profile[trait],
+      previousValue: previousProfile[trait],
+      direction,
+      reason: adaptationReason(trait, pressure),
+    });
+  }));
+}
+
+function getClimateAdaptationScore(profile: AdaptationProfile): number {
+  return round(average(CLIMATE_ADAPTATION_TRAITS.map((trait) => profile[trait])));
+}
+
+function getAdaptationScore(profile: AdaptationProfile): number {
+  return round(average(ADAPTATION_TRAITS.map((trait) => profile[trait])));
+}
+
+function getAdaptationDiversity(populations: readonly AnimalPopulationState[]): number {
+  const present = populations.filter((population) => population.population > 0);
+
+  if (present.length <= 1) {
+    return 0;
+  }
+
+  const traitRanges = ADAPTATION_TRAITS.map((trait) => {
+    const values = present.map((population) => population.adaptationProfile[trait]);
+
+    return Math.max(...values) - Math.min(...values);
+  });
+
+  return round(average(traitRanges));
+}
+
+function getHighestAdaptedPopulation(populations: readonly AnimalPopulationState[]): PopulationAdaptationSummary | null {
+  const present = populations.filter((population) => population.population > 0);
+  const ranked = present.flatMap((population) => ADAPTATION_TRAITS.map((trait) => ({
+    speciesId: population.speciesId,
+    speciesName: population.speciesName,
+    score: population.adaptationProfile[trait],
+    trait,
+  }))).sort((left, right) => right.score - left.score || left.speciesId.localeCompare(right.speciesId) || left.trait.localeCompare(right.trait));
+
+  return ranked[0] ? Object.freeze({ ...ranked[0], score: round(ranked[0].score) }) : null;
+}
+
+function getLowestFitnessPopulation(populations: readonly AnimalPopulationState[]): PopulationAdaptationSummary | null {
+  const ranked = populations
+    .filter((population) => population.population > 0)
+    .map((population) => ({ speciesId: population.speciesId, speciesName: population.speciesName, score: population.fitnessScore }))
+    .sort((left, right) => left.score - right.score || left.speciesId.localeCompare(right.speciesId));
+
+  return ranked[0] ? Object.freeze({ ...ranked[0], score: round(ranked[0].score) }) : null;
+}
+
+function getPopulationFitness(input: {
+  definition: AnimalSpeciesDefinition;
+  habitatSuitability: number;
+  foodAvailability: number;
+  health: number;
+  predationPressure: number;
+  migrationPressure: number;
+  climateStress: number;
+  adaptationProfile: AdaptationProfile;
+}): number {
+  const climateAdaptation = getClimateAdaptationScore(input.adaptationProfile);
+  const adaptationSupport = round(clamp(
+    climateAdaptation * 0.22
+      + input.adaptationProfile.foragingEfficiency * 0.16
+      + input.adaptationProfile.metabolismEfficiency * 0.12
+      + input.adaptationProfile.stressResistance * 0.12
+      + input.adaptationProfile.reproductiveEfficiency * 0.1
+      + input.adaptationProfile.juvenileSurvival * 0.1
+      + input.adaptationProfile.predatorAwareness * 0.08
+      + input.adaptationProfile.diseaseResistance * 0.06
+      + input.adaptationProfile.migrationInstinct * 0.04,
+  ));
+
+  return round(clamp(
+    input.habitatSuitability * 0.24
+      + input.foodAvailability * 0.18
+      + input.health * 0.16
+      + adaptationSupport * 0.24
+      + (1 - input.predationPressure) * 0.08
+      + (1 - input.climateStress) * 0.06
+      + (1 - input.migrationPressure) * 0.04,
+  ));
+}
+
+
+function getSpeciesDefinitionMap(): ReadonlyMap<string, AnimalSpeciesDefinition> {
+  return new Map(getAnimalSpeciesDefinitions().map((definition) => [definition.id, definition]));
+}
+
+function populationBySpecies(populations: readonly AnimalPopulationState[]): ReadonlyMap<string, AnimalPopulationState> {
+  return new Map(populations.map((population) => [population.speciesId, population]));
 }
 
 function hashStringToUint32(value: string): number {
@@ -825,13 +1231,64 @@ function buildAnimalPopulations(
     const habitatSuitability = scoreAnimalSpeciesHabitat(definition, cell, values);
     const foodAvailability = speciesFoodAvailability(definition, cell, values);
     const carryingCapacity = speciesCarryingCapacity(definition, habitatSuitability, foodAvailability, values.carrying);
+    const preliminaryMigration = round(clamp(
+      cell.seasonalityScore * 0.26
+        + cell.seasonalStressScore * 0.24
+        + (1 - foodAvailability) * 0.24
+        + (1 - habitatSuitability) * 0.18
+        + hashUnit(seed, `${cell.id}:${definition.id}:migration-frequency`) * 0.08,
+    ));
+    const adaptationPressure = getAdaptationPressure(cell, values, preliminaryMigration);
+    const adaptationProfile = buildAdaptationProfile(definition, adaptationPressure, seed, tick);
+    const adaptationTrends = buildAdaptationTrends(definition, adaptationPressure, seed, tick, adaptationProfile);
     const birthModifier = seasonalBirthModifier(cell);
     const starvationPenalty = foodAvailability < definition.starvationThreshold ? 0.58 : 1;
-    const netGrowth = Math.max(0, definition.reproductionRate * birthModifier * habitatSuitability * starvationPenalty - definition.naturalMortalityRate * (1 - habitatSuitability));
+    const climateAdaptation = getClimateAdaptationScore(adaptationProfile);
+    const growthAdaptation = 0.72
+      + adaptationProfile.reproductiveEfficiency * 0.22
+      + adaptationProfile.juvenileSurvival * 0.14
+      + adaptationProfile.metabolismEfficiency * 0.08
+      + climateAdaptation * 0.08;
+    const mortalityAdaptation = clamp(
+      1.12
+        - adaptationProfile.stressResistance * 0.2
+        - adaptationProfile.longevity * 0.14
+        - climateAdaptation * 0.12,
+      0.62,
+      1.12,
+    );
+    const netGrowth = Math.max(
+      0,
+      definition.reproductionRate * birthModifier * habitatSuitability * starvationPenalty * growthAdaptation
+        - definition.naturalMortalityRate * (1 - habitatSuitability) * mortalityAdaptation,
+    );
     const seededInitial = carryingCapacity * (0.05 + hashUnit(seed, `${cell.id}:${definition.id}:initial-population`) * 0.18) * habitatSuitability;
-    const population = logisticPopulation(Math.max(1, seededInitial), carryingCapacity, netGrowth, tick);
-    const health = population > 0 ? speciesHealth(definition, habitatSuitability, foodAvailability, cell) : 0;
-    const migrationPressure = population > 0 ? speciesMigrationPressure(definition, health, foodAvailability, habitatSuitability, cell) : 0;
+    const initial = Math.max(1, seededInitial);
+    const population = logisticPopulation(initial, carryingCapacity, netGrowth, tick);
+    const previousPopulation = logisticPopulation(initial, carryingCapacity, netGrowth, tick > 0n ? tick - 1n : 0n);
+    const baseHealth = speciesHealth(definition, habitatSuitability, foodAvailability, cell);
+    const health = population > 0 ? round(clamp(
+      baseHealth * 0.78
+        + adaptationProfile.stressResistance * 0.08
+        + adaptationProfile.metabolismEfficiency * 0.06
+        + adaptationProfile.diseaseResistance * 0.04
+        + adaptationProfile.juvenileSurvival * 0.04,
+    )) : 0;
+    const baseMigrationPressure = population > 0 ? speciesMigrationPressure(definition, health, foodAvailability, habitatSuitability, cell) : 0;
+    const migrationPressure = population > 0 ? round(clamp(
+      baseMigrationPressure * (0.82 + adaptationProfile.migrationInstinct * 0.34 - adaptationProfile.stressResistance * 0.16),
+    )) : 0;
+    const competitionPressure = carryingCapacity > 0 ? round(clamp(population / Math.max(carryingCapacity, 1) - 0.72, 0, 1)) : 0;
+    const fitnessScore = population > 0 ? getPopulationFitness({
+      definition,
+      habitatSuitability,
+      foodAvailability,
+      health,
+      predationPressure: 0,
+      migrationPressure,
+      climateStress: cell.seasonalStressScore,
+      adaptationProfile,
+    }) : 0;
 
     return Object.freeze({
       speciesId: definition.id,
@@ -844,12 +1301,23 @@ function buildAnimalPopulations(
       migrationPressure,
       habitatSuitability,
       carryingCapacity,
+      predationPressure: 0,
+      competitionPressure,
+      carryingCapacityUsage: carryingCapacity > 0 ? round(clamp(population / carryingCapacity)) : 0,
+      inboundMigration: 0,
+      outboundMigration: 0,
+      netMigration: 0,
+      populationTrend: round((population - previousPopulation) / Math.max(previousPopulation, 1) + (fitnessScore - 0.5) * 0.002, 4),
+      fitnessScore,
+      adaptationProfile,
+      adaptationTrends,
       lastUpdatedTick: tick.toString(),
     });
   }).filter((population) => population.population > 0 || population.habitatSuitability >= 0.22);
 
   return Object.freeze(populations.sort((left, right) =>
     right.population - left.population
+      || right.fitnessScore - left.fitnessScore
       || right.habitatSuitability - left.habitatSuitability
       || left.speciesId.localeCompare(right.speciesId),
   ));
@@ -859,6 +1327,460 @@ function averagePopulationMetric(populations: readonly AnimalPopulationState[], 
   const present = populations.filter((population) => population.population > 0);
 
   return round(average((present.length > 0 ? present : populations).map(metric)));
+}
+
+
+type PopulationMigrationDelta = {
+  inbound: number;
+  outbound: number;
+  delta: number;
+};
+
+type CellEcosystemMetrics = {
+  plantConsumptionRate: number;
+  effectivePlantBiomass: number;
+  predationPressure: number;
+  predatorPreyBalance: number;
+  foodStability: number;
+  carryingCapacityUsage: number;
+  migrationActivity: number;
+  populationGrowthRate: number;
+  ecosystemHealthScore: number;
+  ecosystemHealthStatus: EcosystemHealthStatus;
+  averageFitness: number;
+  adaptationDiversity: number;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
+  highestAdaptedPopulation: PopulationAdaptationSummary | null;
+  lowestFitnessPopulation: PopulationAdaptationSummary | null;
+};
+
+function movementKey(cellId: string, speciesId: string): string {
+  return `${cellId}:${speciesId}`;
+}
+
+function getPopulationScore(population: AnimalPopulationState): number {
+  return round(clamp(
+    population.habitatSuitability * 0.36
+      + population.foodAvailability * 0.28
+      + (1 - population.carryingCapacityUsage) * 0.2
+      + population.health * 0.16,
+  ));
+}
+
+function getSpeciesBiomass(populations: readonly AnimalPopulationState[], definitions: ReadonlyMap<string, AnimalSpeciesDefinition>, trophicLevel: AnimalSpeciesDefinition["trophicLevel"]): number {
+  return populations.reduce((total, population) => {
+    if (population.population <= 0 || population.trophicLevel !== trophicLevel) {
+      return total;
+    }
+
+    return total + population.population * (definitions.get(population.speciesId)?.bodyMass ?? 1);
+  }, 0);
+}
+
+function getPlantConsumptionRate(cell: AnimalGridCell, populations: readonly AnimalPopulationState[], definitions: ReadonlyMap<string, AnimalSpeciesDefinition>): number {
+  const demand = populations.reduce((total, population) => {
+    if (population.population <= 0) {
+      return total;
+    }
+
+    const definition = definitions.get(population.speciesId);
+    const mass = definition?.bodyMass ?? 1;
+    const trophicFactor = population.trophicLevel === "Herbivore" ? 1 : population.trophicLevel === "Omnivore" ? 0.34 : 0;
+
+    return total + population.population * mass * trophicFactor;
+  }, 0);
+  const edibleSupply = Math.max(1, cell.ediblePlantScore * 120_000 + cell.biomassScore * 80_000 + cell.regrowthRate * 30_000);
+
+  return round(clamp(demand / edibleSupply));
+}
+
+function getPopulationGrowthRate(populations: readonly AnimalPopulationState[]): number {
+  const present = populations.filter((population) => population.population > 0);
+
+  return round(average(present.map((population) => population.populationTrend)), 4);
+}
+
+function getEcosystemHealthStatus(score: number): EcosystemHealthStatus {
+  if (score >= 0.82) {
+    return "Excellent";
+  }
+
+  if (score >= 0.62) {
+    return "Healthy";
+  }
+
+  if (score >= 0.38) {
+    return "Stressed";
+  }
+
+  if (score >= 0.16) {
+    return "Collapsing";
+  }
+
+  return "Collapsed";
+}
+
+function getCellEcosystemMetrics(
+  cell: AnimalGridCell,
+  populations: readonly AnimalPopulationState[],
+  movementVectors: readonly AnimalMovementVector[],
+  definitions: ReadonlyMap<string, AnimalSpeciesDefinition>,
+): CellEcosystemMetrics {
+  const herbivoreBiomass = getSpeciesBiomass(populations, definitions, "Herbivore");
+  const predatorBiomass = getSpeciesBiomass(populations, definitions, "Carnivore");
+  const plantConsumptionRate = getPlantConsumptionRate(cell, populations, definitions);
+  const effectivePlantBiomass = round(clamp(cell.biomassScore + cell.regrowthRate * 0.16 - plantConsumptionRate * 0.34));
+  const predationPressure = round(clamp(predatorBiomass / Math.max(herbivoreBiomass * 0.28, 1) * 0.5 + cell.predatorCapacity * 0.28));
+  const predatorPreyBalance = round(clamp(1 - Math.abs(predatorBiomass / Math.max(herbivoreBiomass * 0.22, 1) - 1) / 2));
+  const totalPopulation = populations.reduce((total, population) => total + population.population, 0);
+  const totalCapacity = populations.reduce((total, population) => total + population.carryingCapacity, 0);
+  const carryingCapacityUsage = totalCapacity > 0 ? round(clamp(totalPopulation / totalCapacity)) : 0;
+  const movementTotal = movementVectors.reduce((total, vector) => total + vector.population, 0);
+  const migrationActivity = round(clamp(averagePopulationMetric(populations, (population) => population.migrationPressure) * 0.62 + movementTotal / Math.max(totalPopulation, 1) * 0.38));
+  const foodStability = round(clamp(
+    averagePopulationMetric(populations, (population) => population.foodAvailability) * 0.44
+      + effectivePlantBiomass * 0.24
+      + cell.waterAvailabilityScore * 0.16
+      + (1 - plantConsumptionRate) * 0.16
+      - cell.seasonalStressScore * 0.12,
+  ));
+  const capacityBalance = clamp(1 - Math.abs(carryingCapacityUsage - 0.62) / 0.62);
+  const ecosystemHealthScore = round(clamp(
+    cell.animalBiodiversityScore * 0.14
+      + cell.biodiversityScore * 0.12
+      + foodStability * 0.18
+      + predatorPreyBalance * 0.12
+      + effectivePlantBiomass * 0.12
+      + capacityBalance * 0.12
+      + (1 - migrationActivity) * 0.08
+      + (1 - cell.seasonalStressScore) * 0.08
+      + cell.waterAvailabilityScore * 0.08
+      + averagePopulationMetric(populations, (population) => population.health) * 0.06
+      + averagePopulationMetric(populations, (population) => population.fitnessScore) * 0.08,
+  ));
+  const highestAdaptedPopulation = getHighestAdaptedPopulation(populations);
+  const lowestFitnessPopulation = getLowestFitnessPopulation(populations);
+
+  return Object.freeze({
+    plantConsumptionRate,
+    effectivePlantBiomass,
+    predationPressure,
+    predatorPreyBalance,
+    foodStability,
+    carryingCapacityUsage,
+    migrationActivity,
+    populationGrowthRate: getPopulationGrowthRate(populations),
+    ecosystemHealthScore,
+    ecosystemHealthStatus: getEcosystemHealthStatus(ecosystemHealthScore),
+    averageFitness: averagePopulationMetric(populations, (population) => population.fitnessScore),
+    adaptationDiversity: getAdaptationDiversity(populations),
+    averageMigrationInstinct: averagePopulationMetric(populations, (population) => population.adaptationProfile.migrationInstinct),
+    averageDiseaseResistance: averagePopulationMetric(populations, (population) => population.adaptationProfile.diseaseResistance),
+    averageReproductiveEfficiency: averagePopulationMetric(populations, (population) => population.adaptationProfile.reproductiveEfficiency),
+    averageClimateAdaptation: averagePopulationMetric(populations, (population) => getClimateAdaptationScore(population.adaptationProfile)),
+    highestAdaptedPopulation,
+    lowestFitnessPopulation,
+  });
+}
+
+function eventId(cellId: string, tick: bigint, type: EcosystemEventType, speciesId = "cell"): string {
+  return `${cellId}:${tick.toString()}:${type}:${speciesId}`.toLowerCase().replace(/[^a-z0-9:-]+/g, "-");
+}
+
+function makeEcosystemEvent(cell: AnimalGridCell, tick: bigint, type: EcosystemEventType, severity: number, description: string, speciesId?: string): EcosystemEvent {
+  return Object.freeze({
+    id: eventId(cell.id, tick, type, speciesId),
+    tick: tick.toString(),
+    type,
+    severity: round(severity),
+    description,
+    ...(speciesId ? { speciesId } : {}),
+  });
+}
+
+function getAdaptationMilestoneEvents(cell: AnimalGridCell, populations: readonly AnimalPopulationState[], tick: bigint): readonly EcosystemEvent[] {
+  const milestoneTraits = new Set<AdaptationTrait>([
+    "coldTolerance",
+    "heatTolerance",
+    "droughtTolerance",
+    "foragingEfficiency",
+    "migrationInstinct",
+    "predatorAwareness",
+  ]);
+
+  return Object.freeze(populations
+    .filter((population) => population.population > 0)
+    .flatMap((population) => population.adaptationTrends
+      .filter((trend) => milestoneTraits.has(trend.trait) && trend.direction !== "Stable")
+      .flatMap((trend) => {
+        const currentBand = Math.floor(trend.value * 10);
+        const previousBand = Math.floor(trend.previousValue * 10);
+
+        if (currentBand === previousBand || (trend.value < 0.58 && trend.value > 0.42)) {
+          return [];
+        }
+
+        const verb = trend.direction === "Increasing" ? "improved" : "declined";
+
+        return [makeEcosystemEvent(
+          cell,
+          tick,
+          "Adaptation Milestone",
+          Math.abs(trend.value - trend.previousValue) + Math.abs(trend.value - 0.5),
+          `${ADAPTATION_LABELS[trend.trait]} ${verb} for ${population.speciesName}. ${trend.reason}`,
+          population.speciesId,
+        )];
+      }))
+    .sort((left, right) => right.severity - left.severity || left.description.localeCompare(right.description))
+    .slice(0, 2));
+}
+
+function buildEcosystemEvents(cell: AnimalGridCell, populations: readonly AnimalPopulationState[], metrics: CellEcosystemMetrics, tick: bigint): readonly EcosystemEvent[] {
+  const events: EcosystemEvent[] = [...getAdaptationMilestoneEvents(cell, populations, tick)];
+  const dominant = populations.find((population) => population.population > 0);
+
+  if (metrics.populationGrowthRate >= 0.035) {
+    events.push(makeEcosystemEvent(cell, tick, "Population Boom", metrics.populationGrowthRate, `${dominant?.speciesName ?? "Wildlife"} populations are expanding in this habitat.`, dominant?.speciesId));
+  }
+
+  if (metrics.populationGrowthRate <= -0.035) {
+    events.push(makeEcosystemEvent(cell, tick, "Population Collapse", Math.abs(metrics.populationGrowthRate), `${dominant?.speciesName ?? "Wildlife"} populations declined from mortality and scarcity.`, dominant?.speciesId));
+  }
+
+  if (metrics.foodStability < 0.34) {
+    events.push(makeEcosystemEvent(cell, tick, "Food Shortage", 1 - metrics.foodStability, "Food availability is no longer supporting current populations."));
+  }
+
+  if (metrics.migrationActivity >= 0.5 || cell.movementVectors.length > 0) {
+    events.push(makeEcosystemEvent(cell, tick, "Migration Wave", metrics.migrationActivity, "Outward or inward population movement is reshaping the cell."));
+  }
+
+  if (metrics.plantConsumptionRate >= 0.58) {
+    events.push(makeEcosystemEvent(cell, tick, "Overgrazing", metrics.plantConsumptionRate, "Grazing pressure is drawing down edible biomass."));
+  }
+
+  if (metrics.effectivePlantBiomass >= 0.3 && metrics.plantConsumptionRate < 0.32) {
+    events.push(makeEcosystemEvent(cell, tick, "Vegetation Recovery", metrics.effectivePlantBiomass, "Plant biomass recovered faster than local consumption."));
+  }
+
+  if (metrics.predationPressure >= 0.58) {
+    events.push(makeEcosystemEvent(cell, tick, "Predator Expansion", metrics.predationPressure, "Predator abundance is increasing pressure on prey populations."));
+  }
+
+  if (metrics.predationPressure <= 0.12 && cell.herbivoreCapacity >= 0.5) {
+    events.push(makeEcosystemEvent(cell, tick, "Predator Decline", 1 - metrics.predationPressure, "Prey habitat is present but predator pressure is unusually low."));
+  }
+
+  if (cell.precipitationScore <= 0.18 || cell.waterAvailabilityScore <= 0.2) {
+    events.push(makeEcosystemEvent(cell, tick, "Drought Stress", 1 - Math.max(cell.precipitationScore, cell.waterAvailabilityScore), "Dry conditions reduced food stability and increased migration pressure."));
+  }
+
+  if (cell.waterAvailabilityScore >= 0.86 && metrics.foodStability >= 0.58) {
+    events.push(makeEcosystemEvent(cell, tick, "Flood Recovery", cell.waterAvailabilityScore, "High water availability supported biomass and habitat recovery."));
+  }
+
+  if (metrics.ecosystemHealthScore >= 0.72 && metrics.populationGrowthRate >= 0) {
+    events.push(makeEcosystemEvent(cell, tick, "Habitat Recovery", metrics.ecosystemHealthScore, "Biodiversity, food, and population balance improved together."));
+  }
+
+  return Object.freeze(events.sort((left, right) => right.severity - left.severity || left.type.localeCompare(right.type)).slice(0, 6));
+}
+
+function buildEcosystemHistory(cell: AnimalGridCell, events: readonly EcosystemEvent[], tick: bigint): readonly EcosystemEvent[] {
+  const recent = [...events];
+  const fallbackType: EcosystemEventType = cell.ecosystemHealthScore >= 0.62 ? "Habitat Recovery" : cell.foodStability < 0.38 ? "Food Shortage" : "Migration Wave";
+
+  while (recent.length < 4) {
+    const offset = BigInt((recent.length + 1) * 4);
+    const historyTick = tick > offset ? tick - offset : 0n;
+    recent.push(makeEcosystemEvent(
+      cell,
+      historyTick,
+      fallbackType,
+      cell.ecosystemHealthScore,
+      fallbackType === "Habitat Recovery"
+        ? "Recent conditions remained stable enough for recovery."
+        : fallbackType === "Food Shortage"
+          ? "Recent scarcity signals continued to affect the cell."
+          : "Recent migration pressure remained visible in population movement.",
+    ));
+  }
+
+  return Object.freeze(recent.sort((left, right) => Number(BigInt(right.tick) - BigInt(left.tick))).slice(0, 6));
+}
+
+function replaceCellPopulations(
+  cell: AnimalGridCell,
+  populations: readonly AnimalPopulationState[],
+  movementVectors: readonly AnimalMovementVector[],
+  tick: bigint,
+  definitions: ReadonlyMap<string, AnimalSpeciesDefinition>,
+): AnimalGridCell {
+  const presentPopulations = populations.filter((population) => population.population > 0);
+  const dominantPopulation = presentPopulations[0] ?? populations[0] ?? null;
+  const totalWildlifePopulation = presentPopulations.reduce((total, population) => total + population.population, 0);
+  const provisionalCell = Object.freeze({
+    ...cell,
+    dominantSpeciesId: dominantPopulation?.speciesId ?? "none",
+    dominantSpeciesName: dominantPopulation?.speciesName ?? "No Established Wildlife",
+    speciesCount: presentPopulations.length,
+    totalWildlifePopulation,
+    averagePopulationHealth: averagePopulationMetric(populations, (population) => population.health),
+    averageHabitatSuitability: averagePopulationMetric(populations, (population) => population.habitatSuitability),
+    movementVectors,
+    animalPopulations: populations,
+  });
+  const metrics = getCellEcosystemMetrics(provisionalCell, populations, movementVectors, definitions);
+  const events = buildEcosystemEvents(provisionalCell, populations, metrics, tick);
+  const finalCell = Object.freeze({
+    ...provisionalCell,
+    ...metrics,
+    ecosystemEvents: events,
+    ecosystemHistory: buildEcosystemHistory({ ...provisionalCell, ...metrics, ecosystemEvents: events, ecosystemHistory: [] }, events, tick),
+  });
+
+  return finalCell;
+}
+
+function applyPredationMortality(populations: readonly AnimalPopulationState[], predationPressure: number): readonly AnimalPopulationState[] {
+  return Object.freeze(populations.map((population) => {
+    if (population.population <= 0 || population.trophicLevel !== "Herbivore") {
+      return population;
+    }
+
+    const mortality = Math.min(population.population, Math.floor(population.population * predationPressure * 0.035));
+    const adjustedPopulation = population.population - mortality;
+    const adjustedHealth = round(clamp(population.health - predationPressure * 0.12));
+    const adjustedMigration = round(clamp(population.migrationPressure + predationPressure * 0.08));
+
+    return Object.freeze({
+      ...population,
+      population: adjustedPopulation,
+      health: adjustedHealth,
+      migrationPressure: adjustedMigration,
+      predationPressure,
+      fitnessScore: round(clamp(population.fitnessScore - predationPressure * 0.08)),
+      populationTrend: round(population.populationTrend - mortality / Math.max(population.population, 1), 4),
+    });
+  }).sort((left, right) => right.population - left.population || right.habitatSuitability - left.habitatSuitability || left.speciesId.localeCompare(right.speciesId)));
+}
+
+function applyEcosystemDynamics(cells: readonly AnimalGridCell[], grid: SpatialGrid, seed: string, tick: bigint): readonly AnimalGridCell[] {
+  const definitions = getSpeciesDefinitionMap();
+  const byId = new Map(cells.map((cell) => [cell.id, cell]));
+  const deltas = new Map<string, PopulationMigrationDelta>();
+  const vectorsByCell = new Map<string, AnimalMovementVector[]>();
+
+  for (const cell of cells) {
+    const sourcePopulations = populationBySpecies(cell.animalPopulations);
+
+    for (const population of cell.animalPopulations) {
+      if (population.population <= 0 || population.migrationPressure < MIGRATION_PRESSURE_THRESHOLD) {
+        continue;
+      }
+
+      const definition = definitions.get(population.speciesId);
+      const threshold = Math.min(definition?.migrationThreshold ?? MIGRATION_PRESSURE_THRESHOLD, MIGRATION_PRESSURE_THRESHOLD);
+
+      if (population.migrationPressure < threshold) {
+        continue;
+      }
+
+      const sourceScore = getPopulationScore(population);
+      const candidates = grid.getNeighbors(cell.id)
+        .map((neighbor) => byId.get(neighbor.id))
+        .flatMap((neighbor): Array<{ cell: AnimalGridCell; population: AnimalPopulationState; score: number; capacity: number }> => {
+          const neighborPopulation = neighbor ? populationBySpecies(neighbor.animalPopulations).get(population.speciesId) : null;
+
+          if (!neighbor || !neighborPopulation) {
+            return [];
+          }
+
+          const capacity = Math.max(0, neighborPopulation.carryingCapacity - neighborPopulation.population);
+          const score = getPopulationScore(neighborPopulation) - neighbor.seasonalStressScore * 0.04 + hashUnit(seed, `${cell.id}:${neighbor.id}:${population.speciesId}:migration-choice`) * 0.012;
+
+          return capacity > 0 && score > sourceScore + 0.035 ? [{ cell: neighbor, population: neighborPopulation, score, capacity }] : [];
+        })
+        .sort((left, right) => right.score - left.score || left.cell.id.localeCompare(right.cell.id))
+        .slice(0, 3);
+
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const pressureFactor = clamp((population.migrationPressure - threshold) / Math.max(1 - threshold, 0.001));
+      let remaining = Math.min(
+        Math.floor(population.population * MAX_MIGRATION_FRACTION_PER_TICK * pressureFactor),
+        candidates.reduce((total, candidate) => total + candidate.capacity, 0),
+      );
+
+      if (remaining <= 0 && population.population >= 40) {
+        remaining = 1;
+      }
+
+      const totalWeight = candidates.reduce((total, candidate) => total + Math.max(0.01, candidate.score - sourceScore), 0);
+
+      for (const [index, candidate] of candidates.entries()) {
+        if (remaining <= 0) {
+          break;
+        }
+
+        const weight = Math.max(0.01, candidate.score - sourceScore) / Math.max(totalWeight, 0.01);
+        const proposed = index === candidates.length - 1 ? remaining : Math.floor(remaining * weight);
+        const moved = Math.min(remaining, candidate.capacity, proposed);
+
+        if (moved <= 0) {
+          continue;
+        }
+
+        const sourceKey = movementKey(cell.id, population.speciesId);
+        const destinationKey = movementKey(candidate.cell.id, population.speciesId);
+        const sourceDelta = deltas.get(sourceKey) ?? { inbound: 0, outbound: 0, delta: 0 };
+        const destinationDelta = deltas.get(destinationKey) ?? { inbound: 0, outbound: 0, delta: 0 };
+
+        deltas.set(sourceKey, { inbound: sourceDelta.inbound, outbound: sourceDelta.outbound + moved, delta: sourceDelta.delta - moved });
+        deltas.set(destinationKey, { inbound: destinationDelta.inbound + moved, outbound: destinationDelta.outbound, delta: destinationDelta.delta + moved });
+        const vector = Object.freeze({
+          speciesId: population.speciesId,
+          fromCellId: cell.id,
+          toCellId: candidate.cell.id,
+          population: moved,
+          pressure: population.migrationPressure,
+        });
+        vectorsByCell.set(cell.id, [...(vectorsByCell.get(cell.id) ?? []), vector]);
+        vectorsByCell.set(candidate.cell.id, [...(vectorsByCell.get(candidate.cell.id) ?? []), vector]);
+        remaining -= moved;
+      }
+    }
+
+    void sourcePopulations;
+  }
+
+  return Object.freeze(cells.map((cell) => {
+    const migratedPopulations = cell.animalPopulations.map((population) => {
+      const delta = deltas.get(movementKey(cell.id, population.speciesId)) ?? { inbound: 0, outbound: 0, delta: 0 };
+      const adjustedPopulation = Math.max(0, Math.min(population.carryingCapacity, population.population + delta.delta));
+
+      return Object.freeze({
+        ...population,
+        population: adjustedPopulation,
+        inboundMigration: delta.inbound,
+        outboundMigration: delta.outbound,
+        netMigration: delta.delta,
+        carryingCapacityUsage: population.carryingCapacity > 0 ? round(clamp(adjustedPopulation / population.carryingCapacity)) : 0,
+        migrationPressure: round(clamp(population.migrationPressure + (delta.outbound > 0 ? 0.04 : 0) - (delta.inbound > 0 ? 0.02 : 0))),
+        populationTrend: round(population.populationTrend + delta.delta / Math.max(population.population, 1), 4),
+      });
+    }).sort((left, right) => right.population - left.population || right.habitatSuitability - left.habitatSuitability || left.speciesId.localeCompare(right.speciesId));
+    const movementVectors = Object.freeze((vectorsByCell.get(cell.id) ?? []).sort((left, right) => right.population - left.population || left.toCellId.localeCompare(right.toCellId)).slice(0, 8));
+    const prePredationMetrics = getCellEcosystemMetrics(cell, migratedPopulations, movementVectors, definitions);
+    const finalPopulations = applyPredationMortality(migratedPopulations, prePredationMetrics.predationPressure);
+
+    return replaceCellPopulations(cell, finalPopulations, movementVectors, tick, definitions);
+  }));
 }
 
 function buildAnimalCell(inputs: AnimalCellInputs): AnimalGridCell {
@@ -905,6 +1827,27 @@ function buildAnimalCell(inputs: AnimalCellInputs): AnimalGridCell {
     totalWildlifePopulation,
     averagePopulationHealth: averagePopulationMetric(animalPopulations, (population) => population.health),
     averageHabitatSuitability: averagePopulationMetric(animalPopulations, (population) => population.habitatSuitability),
+    plantConsumptionRate: 0,
+    effectivePlantBiomass: plant.biomassScore,
+    predationPressure: 0,
+    predatorPreyBalance: 0,
+    foodStability: 0,
+    carryingCapacityUsage: 0,
+    migrationActivity: migration,
+    populationGrowthRate: getPopulationGrowthRate(animalPopulations),
+    ecosystemHealthScore: 0,
+    ecosystemHealthStatus: "Collapsed",
+    averageFitness: averagePopulationMetric(animalPopulations, (population) => population.fitnessScore),
+    adaptationDiversity: getAdaptationDiversity(animalPopulations),
+    averageMigrationInstinct: averagePopulationMetric(animalPopulations, (population) => population.adaptationProfile.migrationInstinct),
+    averageDiseaseResistance: averagePopulationMetric(animalPopulations, (population) => population.adaptationProfile.diseaseResistance),
+    averageReproductiveEfficiency: averagePopulationMetric(animalPopulations, (population) => population.adaptationProfile.reproductiveEfficiency),
+    averageClimateAdaptation: averagePopulationMetric(animalPopulations, (population) => getClimateAdaptationScore(population.adaptationProfile)),
+    highestAdaptedPopulation: getHighestAdaptedPopulation(animalPopulations),
+    lowestFitnessPopulation: getLowestFitnessPopulation(animalPopulations),
+    ecosystemEvents: Object.freeze([]),
+    ecosystemHistory: Object.freeze([]),
+    movementVectors: Object.freeze([]),
     animalPopulations,
     animalTags: buildAnimalTags(candidate.definition, plant, {
       density,
@@ -1080,6 +2023,22 @@ function buildAnimalSummary(cells: readonly AnimalGridCell[], grid: SpatialGrid)
     totalWildlifePopulation,
     averageHabitatSuitability: round(average(presentPopulations.map((population) => population.habitatSuitability))),
     averageHealth: round(average(presentPopulations.map((population) => population.health))),
+    averageEcosystemHealth: round(average(cells.map((cell) => cell.ecosystemHealthScore))),
+    averageBiodiversity: round(average(cells.map((cell) => Math.max(cell.biodiversityScore, cell.animalBiodiversityScore)))),
+    migrationActivity: round(average(cells.map((cell) => cell.migrationActivity))),
+    foodStability: round(average(cells.map((cell) => cell.foodStability))),
+    predatorBalance: round(average(cells.map((cell) => cell.predatorPreyBalance))),
+    collapsedHabitats: cells.filter((cell) => cell.ecosystemHealthStatus === "Collapsed" || cell.ecosystemHealthStatus === "Collapsing").length,
+    populationGrowthRate: round(average(cells.map((cell) => cell.populationGrowthRate)), 4),
+    plantConsumptionRate: round(average(cells.map((cell) => cell.plantConsumptionRate))),
+    averageFitness: round(average(presentPopulations.map((population) => population.fitnessScore))),
+    averageAdaptationDiversity: round(average(cells.map((cell) => cell.adaptationDiversity))),
+    highestAdaptedPopulation: getHighestAdaptedPopulation(presentPopulations),
+    lowestFitnessPopulation: getLowestFitnessPopulation(presentPopulations),
+    averageMigrationInstinct: round(average(presentPopulations.map((population) => population.adaptationProfile.migrationInstinct))),
+    averageDiseaseResistance: round(average(presentPopulations.map((population) => population.adaptationProfile.diseaseResistance))),
+    averageReproductiveEfficiency: round(average(presentPopulations.map((population) => population.adaptationProfile.reproductiveEfficiency))),
+    averageClimateAdaptation: round(average(presentPopulations.map((population) => getClimateAdaptationScore(population.adaptationProfile)))),
     herbivoreRichRegions: getHerbivoreRichRegions(cells, grid),
     predatorHotspots: getPredatorHotspots(cells, grid),
     huntingValueRegions: getHuntingValueRegions(cells, grid),
@@ -1102,7 +2061,7 @@ export function getAnimalEcologyStateAtTick(
     const plantState = getPlantEcologyStateAtTick(world, tick, grid);
     const terrainState = getTerrainState(world, grid);
     const terrainById = new Map(terrainState.cells.map((cell) => [cell.id, cell]));
-    const cells = Object.freeze(plantState.cells.map((plant) => {
+    const baseCells = Object.freeze(plantState.cells.map((plant) => {
       const terrain = terrainById.get(plant.id);
 
       if (!terrain) {
@@ -1111,6 +2070,8 @@ export function getAnimalEcologyStateAtTick(
 
       return buildAnimalCell({ plant, terrain, seed, tick });
     }));
+
+    const cells = applyEcosystemDynamics(baseCells, grid, seed, tick);
 
     return Object.freeze({
       seed,
@@ -1157,6 +2118,27 @@ function animalCellPersistencePayload(cell: AnimalGridCell): {
   totalWildlifePopulation: number;
   averageAnimalHealth: number;
   averageHabitatSuitability: number;
+  plantConsumptionRate: number;
+  effectivePlantBiomass: number;
+  predationPressure: number;
+  predatorPreyBalance: number;
+  foodStability: number;
+  carryingCapacityUsage: number;
+  migrationActivity: number;
+  populationGrowthRate: number;
+  averageFitness: number;
+  adaptationDiversity: number;
+  averageMigrationInstinct: number;
+  averageDiseaseResistance: number;
+  averageReproductiveEfficiency: number;
+  averageClimateAdaptation: number;
+  highestAdaptedPopulation: Prisma.JsonValue;
+  lowestFitnessPopulation: Prisma.JsonValue;
+  ecosystemHealthScore: number;
+  ecosystemHealthStatus: string;
+  ecosystemEvents: Prisma.InputJsonValue;
+  ecosystemHistory: Prisma.InputJsonValue;
+  movementVectors: Prisma.InputJsonValue;
   animalTags: Prisma.InputJsonValue;
 } {
   return {
@@ -1179,6 +2161,27 @@ function animalCellPersistencePayload(cell: AnimalGridCell): {
     totalWildlifePopulation: cell.totalWildlifePopulation,
     averageAnimalHealth: cell.averagePopulationHealth,
     averageHabitatSuitability: cell.averageHabitatSuitability,
+    plantConsumptionRate: cell.plantConsumptionRate,
+    effectivePlantBiomass: cell.effectivePlantBiomass,
+    predationPressure: cell.predationPressure,
+    predatorPreyBalance: cell.predatorPreyBalance,
+    foodStability: cell.foodStability,
+    carryingCapacityUsage: cell.carryingCapacityUsage,
+    migrationActivity: cell.migrationActivity,
+    populationGrowthRate: cell.populationGrowthRate,
+    averageFitness: cell.averageFitness,
+    adaptationDiversity: cell.adaptationDiversity,
+    averageMigrationInstinct: cell.averageMigrationInstinct,
+    averageDiseaseResistance: cell.averageDiseaseResistance,
+    averageReproductiveEfficiency: cell.averageReproductiveEfficiency,
+    averageClimateAdaptation: cell.averageClimateAdaptation,
+    highestAdaptedPopulation: cell.highestAdaptedPopulation ? { ...cell.highestAdaptedPopulation } : null,
+    lowestFitnessPopulation: cell.lowestFitnessPopulation ? { ...cell.lowestFitnessPopulation } : null,
+    ecosystemHealthScore: cell.ecosystemHealthScore,
+    ecosystemHealthStatus: cell.ecosystemHealthStatus,
+    ecosystemEvents: [...cell.ecosystemEvents],
+    ecosystemHistory: [...cell.ecosystemHistory],
+    movementVectors: [...cell.movementVectors],
     animalTags: [...cell.animalTags],
   };
 }
@@ -1210,6 +2213,31 @@ function samePersistedAnimalCell(
     && animalExisting.totalWildlifePopulation === payload.totalWildlifePopulation
     && animalExisting.averageAnimalHealth === payload.averageAnimalHealth
     && animalExisting.averageHabitatSuitability === payload.averageHabitatSuitability
+    && (!("ecosystemHealthScore" in animalExisting) || (
+      animalExisting.plantConsumptionRate === payload.plantConsumptionRate
+      && animalExisting.effectivePlantBiomass === payload.effectivePlantBiomass
+      && animalExisting.predationPressure === payload.predationPressure
+      && animalExisting.predatorPreyBalance === payload.predatorPreyBalance
+      && animalExisting.foodStability === payload.foodStability
+      && animalExisting.carryingCapacityUsage === payload.carryingCapacityUsage
+      && animalExisting.migrationActivity === payload.migrationActivity
+      && animalExisting.populationGrowthRate === payload.populationGrowthRate
+      && (!("averageFitness" in animalExisting) || (
+        animalExisting.averageFitness === payload.averageFitness
+        && animalExisting.adaptationDiversity === payload.adaptationDiversity
+        && animalExisting.averageMigrationInstinct === payload.averageMigrationInstinct
+        && animalExisting.averageDiseaseResistance === payload.averageDiseaseResistance
+        && animalExisting.averageReproductiveEfficiency === payload.averageReproductiveEfficiency
+        && animalExisting.averageClimateAdaptation === payload.averageClimateAdaptation
+        && JSON.stringify(animalExisting.highestAdaptedPopulation) === JSON.stringify(payload.highestAdaptedPopulation)
+        && JSON.stringify(animalExisting.lowestFitnessPopulation) === JSON.stringify(payload.lowestFitnessPopulation)
+      ))
+      && animalExisting.ecosystemHealthScore === payload.ecosystemHealthScore
+      && animalExisting.ecosystemHealthStatus === payload.ecosystemHealthStatus
+      && JSON.stringify(animalExisting.ecosystemEvents) === JSON.stringify(payload.ecosystemEvents)
+      && JSON.stringify(animalExisting.ecosystemHistory) === JSON.stringify(payload.ecosystemHistory)
+      && JSON.stringify(animalExisting.movementVectors) === JSON.stringify(payload.movementVectors)
+    ))
     && JSON.stringify(existing.animalTags) === JSON.stringify(payload.animalTags);
 }
 
@@ -1222,6 +2250,27 @@ function splitAnimalCellPersistencePayload(payload: ReturnType<typeof animalCell
     totalWildlifePopulation,
     averageAnimalHealth,
     averageHabitatSuitability,
+    plantConsumptionRate,
+    effectivePlantBiomass,
+    predationPressure,
+    predatorPreyBalance,
+    foodStability,
+    carryingCapacityUsage,
+    migrationActivity,
+    populationGrowthRate,
+    averageFitness,
+    adaptationDiversity,
+    averageMigrationInstinct,
+    averageDiseaseResistance,
+    averageReproductiveEfficiency,
+    averageClimateAdaptation,
+    highestAdaptedPopulation,
+    lowestFitnessPopulation,
+    ecosystemHealthScore,
+    ecosystemHealthStatus,
+    ecosystemEvents,
+    ecosystemHistory,
+    movementVectors,
     ...planetCellPayload
   } = payload;
 
@@ -1234,6 +2283,27 @@ function splitAnimalCellPersistencePayload(payload: ReturnType<typeof animalCell
       totalWildlifePopulation,
       averageAnimalHealth,
       averageHabitatSuitability,
+      plantConsumptionRate,
+      effectivePlantBiomass,
+      predationPressure,
+      predatorPreyBalance,
+      foodStability,
+      carryingCapacityUsage,
+      migrationActivity,
+      populationGrowthRate,
+      averageFitness,
+      adaptationDiversity,
+      averageMigrationInstinct,
+      averageDiseaseResistance,
+      averageReproductiveEfficiency,
+      averageClimateAdaptation,
+      highestAdaptedPopulation,
+      lowestFitnessPopulation,
+      ecosystemHealthScore,
+      ecosystemHealthStatus,
+      ecosystemEvents,
+      ecosystemHistory,
+      movementVectors,
     },
   };
 }
@@ -1257,11 +2327,47 @@ async function supportsAnimalSpeciesAggregateColumns(client: AnimalPersistenceCl
   return Boolean(rows[0]?.exists);
 }
 
+async function supportsEcosystemDynamicsColumns(client: AnimalPersistenceClient): Promise<boolean> {
+  if (!client.$queryRaw) {
+    return false;
+  }
+
+  const rows = await client.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'ecosystemHealthScore'
+    ) AS exists
+  `;
+
+  return Boolean(rows[0]?.exists);
+}
+
+async function supportsPopulationAdaptationColumns(client: AnimalPersistenceClient): Promise<boolean> {
+  if (!client.$queryRaw) {
+    return false;
+  }
+
+  const rows = await client.$queryRaw<SchemaColumnProbe[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'PlanetCell'
+        AND column_name = 'averageFitness'
+    ) AS exists
+  `;
+
+  return Boolean(rows[0]?.exists);
+}
+
 async function persistAnimalCellSpeciesAggregates(
   client: AnimalPersistenceClient,
   planetCellId: string,
   payload: ReturnType<typeof splitAnimalCellPersistencePayload>["speciesPayload"],
   supportsSpeciesAggregates: boolean,
+  supportsEcosystemDynamics: boolean,
+  supportsPopulationAdaptation: boolean,
 ): Promise<void> {
   if (!client.$executeRaw || !supportsSpeciesAggregates) {
     return;
@@ -1276,6 +2382,47 @@ async function persistAnimalCellSpeciesAggregates(
       "totalWildlifePopulation" = ${payload.totalWildlifePopulation},
       "averageAnimalHealth" = ${payload.averageAnimalHealth},
       "averageHabitatSuitability" = ${payload.averageHabitatSuitability}
+    WHERE "id" = ${planetCellId}
+  `;
+
+  if (!supportsEcosystemDynamics) {
+    return;
+  }
+
+  await client.$executeRaw`
+    UPDATE "PlanetCell"
+    SET
+      "plantConsumptionRate" = ${payload.plantConsumptionRate},
+      "effectivePlantBiomass" = ${payload.effectivePlantBiomass},
+      "predationPressure" = ${payload.predationPressure},
+      "predatorPreyBalance" = ${payload.predatorPreyBalance},
+      "foodStability" = ${payload.foodStability},
+      "carryingCapacityUsage" = ${payload.carryingCapacityUsage},
+      "migrationActivity" = ${payload.migrationActivity},
+      "populationGrowthRate" = ${payload.populationGrowthRate},
+      "ecosystemHealthScore" = ${payload.ecosystemHealthScore},
+      "ecosystemHealthStatus" = ${payload.ecosystemHealthStatus},
+      "ecosystemEvents" = ${payload.ecosystemEvents},
+      "ecosystemHistory" = ${payload.ecosystemHistory},
+      "movementVectors" = ${payload.movementVectors}
+    WHERE "id" = ${planetCellId}
+  `;
+
+  if (!supportsPopulationAdaptation) {
+    return;
+  }
+
+  await client.$executeRaw`
+    UPDATE "PlanetCell"
+    SET
+      "averageFitness" = ${payload.averageFitness},
+      "adaptationDiversity" = ${payload.adaptationDiversity},
+      "averageMigrationInstinct" = ${payload.averageMigrationInstinct},
+      "averageDiseaseResistance" = ${payload.averageDiseaseResistance},
+      "averageReproductiveEfficiency" = ${payload.averageReproductiveEfficiency},
+      "averageClimateAdaptation" = ${payload.averageClimateAdaptation},
+      "highestAdaptedPopulation" = ${payload.highestAdaptedPopulation},
+      "lowestFitnessPopulation" = ${payload.lowestFitnessPopulation}
     WHERE "id" = ${planetCellId}
   `;
 }
@@ -1312,6 +2459,8 @@ export async function persistAnimalEcologyState(
   let unchangedCells = 0;
   const now = new Date();
   const supportsSpeciesAggregates = await supportsAnimalSpeciesAggregateColumns(client);
+  const supportsEcosystemDynamics = await supportsEcosystemDynamicsColumns(client);
+  const supportsPopulationAdaptation = await supportsPopulationAdaptationColumns(client);
   const populationRows: AnimalPopulationPersistencePayload[] = [];
 
   for (const cell of state.cells) {
@@ -1332,6 +2481,16 @@ export async function persistAnimalEcologyState(
         migrationPressure: population.migrationPressure,
         habitatSuitability: population.habitatSuitability,
         carryingCapacity: population.carryingCapacity,
+        predationPressure: population.predationPressure,
+        competitionPressure: population.competitionPressure,
+        carryingCapacityUsage: population.carryingCapacityUsage,
+        inboundMigration: population.inboundMigration,
+        outboundMigration: population.outboundMigration,
+        netMigration: population.netMigration,
+        populationTrend: population.populationTrend,
+        fitnessScore: population.fitnessScore,
+        adaptationProfile: { ...population.adaptationProfile },
+        adaptationTrends: [...population.adaptationTrends],
         lastUpdatedTick: normalizeTick(population.lastUpdatedTick),
       });
     }
@@ -1351,7 +2510,7 @@ export async function persistAnimalEcologyState(
         animalUpdatedAt: now,
       },
     });
-    await persistAnimalCellSpeciesAggregates(client, existing.id, speciesPayload, supportsSpeciesAggregates);
+    await persistAnimalCellSpeciesAggregates(client, existing.id, speciesPayload, supportsSpeciesAggregates, supportsEcosystemDynamics, supportsPopulationAdaptation);
     updatedCells += 1;
   }
 

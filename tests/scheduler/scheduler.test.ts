@@ -254,6 +254,7 @@ describe("simulation scheduler system order", () => {
     "Chemistry",
     "Biology",
     "Animals",
+    "Population Adaptation",
     "Humans",
     "Civilization",
     "Economy",
