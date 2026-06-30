@@ -10,6 +10,10 @@ import {
   SimulationScheduler,
   SimulationSchedulerError,
 } from "../../src/lib/simulation/scheduler";
+import {
+  durationToTicks,
+  getMaxSimulationTicks,
+} from "../../src/lib/simulation/simulation-limits";
 import { prisma } from "../../src/lib/worlds/world-lifecycle";
 import {
   cleanupTestWorld,
@@ -18,6 +22,15 @@ import {
 } from "../helpers/test-worlds";
 
 const createdSlugs = new Set<string>();
+const compressedYearConfig = {
+  tickDurationSeconds: 60,
+  dayLengthSeconds: 60,
+  yearLengthDays: 1,
+  planet: {
+    rotationPeriodHours: 1 / 60,
+    orbitalPeriodDays: 1,
+  },
+};
 
 async function track<T extends { slug: string }>(worldPromise: Promise<T>): Promise<T> {
   const world = await worldPromise;
@@ -113,16 +126,215 @@ describe("simulation scheduler guardrails", () => {
     );
   });
 
-  it("rejects tick counts above the safe maximum", async () => {
-    const world = await track(createActiveSandboxTestWorld());
+  it("rejects tick counts above the configured world maximum", async () => {
+    const previousMaxYears = process.env.ATLAS_MAX_SIMULATION_YEARS;
+    process.env.ATLAS_MAX_SIMULATION_YEARS = "1";
+    const world = await track(createActiveSandboxTestWorld(compressedYearConfig));
 
-    await expectSchedulerError(
-      () => SimulationScheduler.advanceTicks(world.id, 10_001),
-      "INVALID_TICK_COUNT",
-    );
+    try {
+      await expectSchedulerError(
+        () => SimulationScheduler.advanceTicks(world.id, 2),
+        "INVALID_TICK_COUNT",
+      );
+    } finally {
+      if (previousMaxYears === undefined) {
+        delete process.env.ATLAS_MAX_SIMULATION_YEARS;
+      } else {
+        process.env.ATLAS_MAX_SIMULATION_YEARS = previousMaxYears;
+      }
+    }
   });
 });
 
+describe("simulation scheduler long-run limits", () => {
+
+
+  it("converts the default 10000-year limit without integer overflow", () => {
+    const defaultConfig = {
+      tickDurationSeconds: 60,
+      dayLengthSeconds: 86_400,
+      yearLengthDays: 365,
+    };
+
+    expect(durationToTicks({ value: 10_000, unit: "years" }, defaultConfig)).toBe(5_256_000_000);
+    expect(getMaxSimulationTicks(defaultConfig, 10_000)).toBe(5_256_000_000);
+  });
+
+  it.each([10, 100, 1_000])("executes a %i-year compressed run with checkpoints", async (years) => {
+    const previousCheckpointTicks = process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS;
+    process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS = "100";
+    const world = await track(createActiveSandboxTestWorld(compressedYearConfig));
+    const scheduler = new SimulationScheduler([
+      createPlaceholderSystem("fast-long-run-system", "Fast Long Run System", 10, () => ({ success: true })),
+    ]);
+    const ticks = durationToTicks({ value: years, unit: "years" }, compressedYearConfig);
+
+    try {
+      const summary = await scheduler.advanceTicksWithCheckpoints(world.id, ticks);
+      const updatedWorld = await prisma.world.findUniqueOrThrow({ where: { id: world.id } });
+      const checkpoints = await prisma.worldActionLog.count({
+        where: { worldId: world.id, action: "SIMULATION_RUN_CHECKPOINT" },
+      });
+
+      expect(summary.success).toBe(true);
+      expect(summary.completedTicks).toBe(ticks);
+      expect(summary.lastTick).toBe(BigInt(ticks));
+      expect(updatedWorld.currentTick).toBe(BigInt(ticks));
+      expect(checkpoints).toBe(Math.ceil(ticks / 100));
+    } finally {
+      if (previousCheckpointTicks === undefined) {
+        delete process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS;
+      } else {
+        process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS = previousCheckpointTicks;
+      }
+    }
+  });
+});
+
+describe("simulation scheduler fidelity modes", () => {
+  const compactFidelityConfig = {
+    tickDurationSeconds: 1,
+    dayLengthSeconds: 2,
+    yearLengthDays: 4,
+    planet: {
+      rotationPeriodHours: 2 / 3600,
+      orbitalPeriodDays: 4,
+    },
+  };
+
+  it.each([10, 100, 1_000])("accepts a %i-year Turbo Test run", async (years) => {
+    const world = await track(createActiveSandboxTestWorld(compactFidelityConfig));
+    const scheduler = new SimulationScheduler([
+      createPlaceholderSystem("turbo-acceptance-system", "Turbo Acceptance System", 10, () => ({ success: true })),
+    ]);
+    const ticks = durationToTicks({ value: years, unit: "years" }, compactFidelityConfig);
+
+    const summary = await scheduler.advanceTicksWithCheckpoints(world.id, ticks, { fidelityMode: "turbo" });
+    const updatedWorld = await prisma.world.findUniqueOrThrow({ where: { id: world.id } });
+
+    expect(summary.success).toBe(true);
+    expect(summary.completedTicks).toBe(ticks);
+    expect(summary.lastTick).toBe(BigInt(ticks));
+    expect(updatedWorld.currentTick).toBe(BigInt(ticks));
+  });
+
+  it("keeps Accurate Mode on the existing per-tick persistence path", async () => {
+    const world = await track(createActiveSandboxTestWorld(compressedYearConfig));
+    const scheduler = new SimulationScheduler([
+      createPlaceholderSystem("accurate-mode-system", "Accurate Mode System", 10, () => ({ success: true })),
+    ]);
+
+    const summary = await scheduler.advanceTicksWithCheckpoints(world.id, 3, { fidelityMode: "accurate" });
+    const ticks = await prisma.simulationTick.findMany({ where: { worldId: world.id } });
+
+    expect(summary.completedTicks).toBe(3);
+    expect(summary.lastTick).toBe(3n);
+    expect(ticks).toHaveLength(3);
+    expect(ticks.map((tick) => tick.tick).sort()).toEqual([1n, 2n, 3n]);
+  });
+
+  it("reduces tick, event, and checkpoint writes in Fast and Turbo modes", async () => {
+    const previousAccurateCheckpoint = process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS;
+    const previousFastCheckpoint = process.env.ATLAS_FAST_SIMULATION_CHECKPOINT_TICKS;
+    const previousTurboCheckpoint = process.env.ATLAS_TURBO_SIMULATION_CHECKPOINT_TICKS;
+    process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS = "1";
+    process.env.ATLAS_FAST_SIMULATION_CHECKPOINT_TICKS = "2";
+    process.env.ATLAS_TURBO_SIMULATION_CHECKPOINT_TICKS = "8";
+
+    const eventSystem = createPlaceholderSystem("fidelity-event-system", "Fidelity Event System", 10, () => ({
+      success: true,
+      events: [{ type: "FIDELITY_TEST_EVENT", title: "Fidelity Test Event" }],
+    }));
+
+    try {
+      const accurateWorld = await track(createActiveSandboxTestWorld(compactFidelityConfig));
+      const fastWorld = await track(createActiveSandboxTestWorld(compactFidelityConfig));
+      const turboWorld = await track(createActiveSandboxTestWorld(compactFidelityConfig));
+      const accurateScheduler = new SimulationScheduler([eventSystem]);
+      const fastScheduler = new SimulationScheduler([eventSystem]);
+      const turboScheduler = new SimulationScheduler([eventSystem]);
+      const ticks = durationToTicks({ value: 1, unit: "years" }, compactFidelityConfig);
+
+      await accurateScheduler.advanceTicksWithCheckpoints(accurateWorld.id, ticks, { fidelityMode: "accurate" });
+      await fastScheduler.advanceTicksWithCheckpoints(fastWorld.id, ticks, { fidelityMode: "fast" });
+      await turboScheduler.advanceTicksWithCheckpoints(turboWorld.id, ticks, { fidelityMode: "turbo" });
+
+      const [accurateTickRows, fastTickRows, turboTickRows] = await Promise.all([
+        prisma.simulationTick.count({ where: { worldId: accurateWorld.id } }),
+        prisma.simulationTick.count({ where: { worldId: fastWorld.id } }),
+        prisma.simulationTick.count({ where: { worldId: turboWorld.id } }),
+      ]);
+      const [accurateEvents, fastEvents, turboEvents] = await Promise.all([
+        prisma.event.count({ where: { worldId: accurateWorld.id } }),
+        prisma.event.count({ where: { worldId: fastWorld.id } }),
+        prisma.event.count({ where: { worldId: turboWorld.id } }),
+      ]);
+      const [accurateCheckpoints, fastCheckpoints, turboCheckpoints] = await Promise.all([
+        prisma.worldActionLog.count({ where: { worldId: accurateWorld.id, action: "SIMULATION_RUN_CHECKPOINT" } }),
+        prisma.worldActionLog.count({ where: { worldId: fastWorld.id, action: "SIMULATION_RUN_CHECKPOINT" } }),
+        prisma.worldActionLog.count({ where: { worldId: turboWorld.id, action: "SIMULATION_RUN_CHECKPOINT" } }),
+      ]);
+
+      expect(fastTickRows).toBeLessThan(accurateTickRows);
+      expect(turboTickRows).toBeLessThan(fastTickRows);
+      expect(fastEvents).toBeLessThan(accurateEvents);
+      expect(turboEvents).toBeLessThan(fastEvents);
+      expect(fastCheckpoints).toBeLessThan(accurateCheckpoints);
+      expect(turboCheckpoints).toBeLessThan(fastCheckpoints);
+    } finally {
+      if (previousAccurateCheckpoint === undefined) {
+        delete process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS;
+      } else {
+        process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS = previousAccurateCheckpoint;
+      }
+
+      if (previousFastCheckpoint === undefined) {
+        delete process.env.ATLAS_FAST_SIMULATION_CHECKPOINT_TICKS;
+      } else {
+        process.env.ATLAS_FAST_SIMULATION_CHECKPOINT_TICKS = previousFastCheckpoint;
+      }
+
+      if (previousTurboCheckpoint === undefined) {
+        delete process.env.ATLAS_TURBO_SIMULATION_CHECKPOINT_TICKS;
+      } else {
+        process.env.ATLAS_TURBO_SIMULATION_CHECKPOINT_TICKS = previousTurboCheckpoint;
+      }
+    }
+  });
+
+  it("keeps same-seed output deterministic for the same fidelity mode", async () => {
+    const seed = "fidelity-determinism-seed";
+    const firstWorld = await track(createActiveSandboxTestWorld({ ...compactFidelityConfig, seed }));
+    const secondWorld = await track(createActiveSandboxTestWorld({ ...compactFidelityConfig, seed }));
+    const deterministicSystem = createPlaceholderSystem("mode-determinism-system", "Mode Determinism System", 10, (context) => ({
+      success: true,
+      metadata: {
+        mode: context.fidelityMode,
+        sample: context.random.integer(1, 1_000_000),
+        tick: context.tick.toString(),
+      },
+    }));
+    const scheduler = new SimulationScheduler([deterministicSystem]);
+    const ticks = durationToTicks({ value: 3, unit: "years" }, compactFidelityConfig);
+
+    await scheduler.advanceTicksWithCheckpoints(firstWorld.id, ticks, { fidelityMode: "turbo" });
+    await scheduler.advanceTicksWithCheckpoints(secondWorld.id, ticks, { fidelityMode: "turbo" });
+
+    async function samples(worldId: string) {
+      const rows = await prisma.simulationTick.findMany({
+        orderBy: { tick: "asc" },
+        where: { worldId },
+      });
+
+      return rows.map((row) => {
+        const metadata = row.metadata as { pipeline?: Array<{ id: string; metadata?: unknown }> };
+        return metadata.pipeline?.find((entry) => entry.id === "mode-determinism-system")?.metadata;
+      });
+    }
+
+    expect(await samples(firstWorld.id)).toEqual(await samples(secondWorld.id));
+  });
+});
 describe("simulation scheduler tick persistence", () => {
   it("increments World.currentTick and creates a successful SimulationTick for one tick", async () => {
     const world = await track(createActiveSandboxTestWorld());
@@ -260,6 +472,7 @@ describe("simulation scheduler system order", () => {
     "Economy",
     "Culture",
     "Memory",
+    "Discovery",
     "Event Generation",
     "Metrics",
     "Save State",

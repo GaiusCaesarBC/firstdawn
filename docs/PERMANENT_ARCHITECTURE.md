@@ -681,7 +681,7 @@ For simulation systems, include long-duration stability tests where useful.
 Examples:
 
 * 1,000 ticks
-* 10,000 ticks
+* 10-year, 100-year, and 1,000-year configured runs
 * extreme climates
 * empty cells
 * collapsed ecosystems

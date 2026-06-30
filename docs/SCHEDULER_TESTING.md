@@ -63,7 +63,7 @@ The same file also scans `src/lib/simulation` for `Math.random()` so simulation 
 These tests verify:
 
 - paused, archived, production, and protected production worlds cannot advance
-- invalid tick counts and counts above `10000` are rejected
+- invalid tick counts and counts above the configured maximum simulation years are rejected
 - successful ticks increment `World.currentTick`
 - each successful tick creates a `SimulationTick`
 - `SimulationTick.systemCount` matches the registered system count

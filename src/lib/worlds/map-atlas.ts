@@ -1,4 +1,7 @@
 import type { AnimalGridCell } from "../simulation/animal-engine";
+import { getHumanMvaStateAtTick } from "../simulation/human-engine";
+import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanEmotionState, HumanNeeds, HumanRelationship } from "../simulation/human-types";
+import { HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
 import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
 import type {
   AstronomyState,
@@ -17,6 +20,7 @@ import type {
 } from "../simulation/climate-engine";
 import { getClimateGridAtTick, getClimateStateAtTick } from "../simulation/climate-engine";
 import { createGrid, getGridSummary, type SpatialGrid } from "../simulation/grid/grid";
+import { getSnapshotWorldKey, memoizeSnapshotValue, type TimedSnapshotValue } from "../simulation/snapshot-performance";
 import type {
   HydrologyGridCell,
   HydrologySummary,
@@ -196,6 +200,86 @@ export type AtlasCell = ClimateGridCell & Pick<
   animalPopulations: AnimalGridCell["animalPopulations"];
 };
 
+export type AtlasHumanAgent = {
+  id: string;
+  label: string;
+  sex: "male" | "female";
+  approxAgeYears: number;
+  currentCellId: string;
+  currentAction: string | null;
+  needs: HumanNeeds;
+  emotions: HumanEmotionState;
+  currentMotivation?: string | null;
+  motivationScores?: Record<string, number>;
+  confidence?: number;
+  familiarity?: number;
+  curiosityProfile?: {
+    environmental: number;
+    social: number;
+    technical: number;
+    noveltySeeking: number;
+    riskTolerance: number;
+  };
+  relationshipDrivers?: {
+    trust: number;
+    affection: number;
+    attraction: number;
+    companionship: number;
+  } | null;
+  decisionExplanation?: string | null;
+  currentGoal?: string | null;
+  relationshipToOther: HumanRelationship | null;
+  latestMemory: {
+    tick: string;
+    eventType: string;
+    summary: string;
+  } | null;
+  latestCausalEvent: {
+    tick: string;
+    type: string;
+    title: string;
+    summary: string;
+  } | null;
+  latestEmotionChangeSummary: string;
+  emotionReasons: AtlasHumanEmotionReason[];
+};
+
+export type AtlasHumanMva = {
+  tick: string;
+  agents: AtlasHumanAgent[];
+  causalEvents: Array<{
+    id: string;
+    tick: string;
+    type: string;
+    title: string;
+    summary: string;
+    agentIds: string[];
+    cellId: string;
+  }>;
+  chroniclerEntries: ChroniclerEntry[];
+  canSimulateOneHumanDay: boolean;
+  forbiddenSystemsImplemented: [];
+};
+
+type AtlasHumanEmotionKey = "fear" | "distress" | "relief" | "curiosity" | "trust" | "attachment";
+
+export type AtlasHumanEmotionReason = {
+  emotion: AtlasHumanEmotionKey;
+  before: number;
+  after: number;
+  delta: number;
+  direction: "increased" | "decreased" | "steady" | "viable";
+  summary: string;
+  reasons: string[];
+  causalEventLinks: Array<{
+    id: string;
+    tick: string;
+    type: string;
+    title: string;
+    summary: string;
+  }>;
+};
+
 export type AtlasStatistics = {
   averageTemperatureC: number;
   averageSolarEnergy: number;
@@ -235,6 +319,7 @@ export type AtlasSnapshot = {
   weatherSummary: WeatherSummary;
   resourceSummary: PlanetResourceSummary;
   statistics: AtlasStatistics;
+  humans: AtlasHumanMva;
   fingerprint: Pick<WorldFingerprint, "seed" | "hash" | "shortHash" | "canonical">;
   integrity: {
     canonical: boolean;
@@ -492,6 +577,335 @@ function buildAtlasStatistics(
   };
 }
 
+const EXPLAINED_HUMAN_EMOTIONS: AtlasHumanEmotionKey[] = ["fear", "distress", "relief", "curiosity", "trust", "attachment"];
+const EMOTION_CHANGE_EPSILON = 0.005;
+
+function emotionLabel(emotion: AtlasHumanEmotionKey): string {
+  return `${emotion.charAt(0).toUpperCase()}${emotion.slice(1)}`;
+}
+
+function joinReasonPhrases(reasons: readonly string[]): string {
+  if (reasons.length <= 1) {
+    return reasons[0] ?? "no direct affect driver changed enough to move it";
+  }
+
+  if (reasons.length === 2) {
+    return `${reasons[0]} and ${reasons[1]}`;
+  }
+
+  return `${reasons.slice(0, -1).join(", ")}, and ${reasons[reasons.length - 1]}`;
+}
+
+function addUniqueReason(reasons: string[], reason: string) {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason);
+  }
+}
+
+function emotionDirection(emotion: AtlasHumanEmotionKey, before: number, after: number): AtlasHumanEmotionReason["direction"] {
+  const delta = after - before;
+
+  if (Math.abs(delta) >= EMOTION_CHANGE_EPSILON) {
+    return delta > 0 ? "increased" : "decreased";
+  }
+
+  return emotion === "curiosity" && after >= 0.35 ? "viable" : "steady";
+}
+
+function hasHumanEvent(events: readonly HumanCausalEvent[], typePart: string): boolean {
+  return events.some((event) => event.type.includes(typePart));
+}
+
+function linkedEventsForEmotion(
+  emotion: AtlasHumanEmotionKey,
+  events: readonly HumanCausalEvent[],
+  normalizeHumanTextIds: (value: string) => string,
+): AtlasHumanEmotionReason["causalEventLinks"] {
+  const relevantEvents = events.filter((event) => {
+    if (emotion === "fear") {
+      return event.type.includes("Safety") || event.type.includes("Need");
+    }
+
+    if (emotion === "distress" || emotion === "relief") {
+      return event.type.includes("Need") || event.type.includes("Safety");
+    }
+
+    if (emotion === "trust" || emotion === "attachment") {
+      return event.type.includes("Communication") || event.type.includes("Teaching");
+    }
+
+    return event.type.includes("Safety");
+  });
+
+  return relevantEvents.slice(-3).map((event) => ({
+    id: normalizeHumanTextIds(event.id),
+    tick: event.tick,
+    type: event.type,
+    title: event.title,
+    summary: normalizeHumanTextIds(event.summary),
+  }));
+}
+
+function buildEmotionReasonPhrases(
+  emotion: AtlasHumanEmotionKey,
+  beforeAgent: HumanAgent,
+  afterAgent: HumanAgent,
+  dayEvents: readonly HumanCausalEvent[],
+): string[] {
+  const reasons: string[] = [];
+  const needReduced = (key: keyof HumanNeeds) => beforeAgent.needs[key] > afterAgent.needs[key] + EMOTION_CHANGE_EPSILON;
+  const needRose = (key: keyof HumanNeeds) => afterAgent.needs[key] > beforeAgent.needs[key] + EMOTION_CHANGE_EPSILON;
+  const direction = emotionDirection(emotion, beforeAgent.emotions[emotion], afterAgent.emotions[emotion]);
+
+  if (emotion === "fear") {
+    if (direction === "increased") {
+      if (hasHumanEvent(dayEvents, "Safety Check Failed")) addUniqueReason(reasons, "a safety check failed under a serious threat");
+      if (needRose("safety") || afterAgent.needs.safety > 0.52) addUniqueReason(reasons, "safety pressure stayed high");
+      if (afterAgent.needs.thirst > 0.64) addUniqueReason(reasons, "thirst kept danger salient");
+      if (afterAgent.needs.hunger > 0.68) addUniqueReason(reasons, "hunger kept danger salient");
+    } else if (direction === "decreased") {
+      if (afterAgent.needs.safety < 0.42 || needReduced("safety")) addUniqueReason(reasons, "surroundings were safe");
+      if (needReduced("hunger")) addUniqueReason(reasons, "hunger was reduced");
+      if (needReduced("thirst")) addUniqueReason(reasons, "thirst was reduced");
+      if (hasHumanEvent(dayEvents, "Safety Secured")) addUniqueReason(reasons, "safer ground was found");
+    } else if (afterAgent.needs.safety < 0.42) {
+      addUniqueReason(reasons, "no serious safety threat was present");
+    }
+  }
+
+  if (emotion === "distress") {
+    if (direction === "increased") {
+      if (needRose("hunger") || afterAgent.needs.hunger > 0.68) addUniqueReason(reasons, "hunger pressure rose");
+      if (needRose("thirst") || afterAgent.needs.thirst > 0.64) addUniqueReason(reasons, "thirst pressure rose");
+      if (needRose("fatigue") || afterAgent.needs.fatigue > 0.78) addUniqueReason(reasons, "fatigue added strain");
+      if (needRose("safety") || afterAgent.needs.safety > 0.68) addUniqueReason(reasons, "safety pressure added strain");
+    } else if (direction === "decreased") {
+      if (needReduced("hunger")) addUniqueReason(reasons, "hunger was reduced");
+      if (needReduced("thirst")) addUniqueReason(reasons, "thirst was reduced");
+      if (needReduced("fatigue")) addUniqueReason(reasons, "fatigue was reduced");
+      if (afterAgent.emotions.relief > beforeAgent.emotions.relief) addUniqueReason(reasons, "relief rose after a successful action");
+    } else if (afterAgent.needs.safety < 0.42) {
+      addUniqueReason(reasons, "basic strain stayed manageable");
+    }
+  }
+
+  if (emotion === "relief") {
+    if (direction === "increased") {
+      if (hasHumanEvent(dayEvents, "Need Fulfilled")) addUniqueReason(reasons, "food or water was successfully gathered");
+      if (hasHumanEvent(dayEvents, "Safety Secured")) addUniqueReason(reasons, "safer ground was found");
+      if (needReduced("fatigue")) addUniqueReason(reasons, "rest reduced fatigue");
+    } else if (direction === "decreased") {
+      addUniqueReason(reasons, "earlier relief faded without a new major success");
+    } else {
+      addUniqueReason(reasons, "no major relief-producing event changed it");
+    }
+  }
+
+  if (emotion === "curiosity") {
+    if (direction === "increased") {
+      if (afterAgent.emotions.fear < 0.45 && afterAgent.emotions.distress < 0.65) addUniqueReason(reasons, "no serious threat was present");
+      if (afterAgent.emotions.comfort >= beforeAgent.emotions.comfort) addUniqueReason(reasons, "comfort supported attention");
+      addUniqueReason(reasons, "innate curiosity kept pulling attention outward");
+    } else if (direction === "decreased") {
+      if (afterAgent.emotions.fear > beforeAgent.emotions.fear) addUniqueReason(reasons, "fear narrowed attention");
+      if (afterAgent.emotions.distress > beforeAgent.emotions.distress) addUniqueReason(reasons, "distress narrowed attention");
+      if (afterAgent.needs.fatigue > beforeAgent.needs.fatigue) addUniqueReason(reasons, "fatigue reduced exploratory energy");
+    } else if (direction === "viable") {
+      addUniqueReason(reasons, "no serious threat was present");
+    } else {
+      addUniqueReason(reasons, "attention stayed constrained by current pressure");
+    }
+  }
+
+  if (emotion === "trust") {
+    if (direction === "increased") {
+      if (hasHumanEvent(dayEvents, "Communication")) addUniqueReason(reasons, "companionship was communicated successfully");
+      if (hasHumanEvent(dayEvents, "Teaching")) addUniqueReason(reasons, "teaching reinforced reliability");
+    } else if (direction === "decreased") {
+      addUniqueReason(reasons, "trust was reduced by the day outcome");
+    } else {
+      addUniqueReason(reasons, "no trust-changing interaction occurred");
+    }
+  }
+
+  if (emotion === "attachment") {
+    if (direction === "increased") {
+      if (hasHumanEvent(dayEvents, "Communication")) addUniqueReason(reasons, "companionship was communicated successfully");
+      addUniqueReason(reasons, "repeated proximity strengthened bonding");
+    } else if (direction === "decreased") {
+      addUniqueReason(reasons, "attachment weakened during the day");
+    } else {
+      addUniqueReason(reasons, "no attachment-changing interaction occurred");
+    }
+  }
+
+  return reasons.length > 0 ? reasons : ["the background affect update kept it near its prior level"];
+}
+
+function buildHumanEmotionReasons(
+  beforeAgent: HumanAgent,
+  afterAgent: HumanAgent,
+  dayEvents: readonly HumanCausalEvent[],
+  normalizeHumanTextIds: (value: string) => string,
+): AtlasHumanEmotionReason[] {
+  return EXPLAINED_HUMAN_EMOTIONS.map((emotion) => {
+    const before = round(beforeAgent.emotions[emotion]);
+    const after = round(afterAgent.emotions[emotion]);
+    const delta = round(after - before);
+    const direction = emotionDirection(emotion, before, after);
+    const reasons = buildEmotionReasonPhrases(emotion, beforeAgent, afterAgent, dayEvents);
+    const directionText = direction === "viable" ? "stayed viable" : direction === "steady" ? "remained steady" : direction;
+
+    return {
+      emotion,
+      before,
+      after,
+      delta,
+      direction,
+      summary: `${emotionLabel(emotion)} ${directionText} because ${joinReasonPhrases(reasons)}.`,
+      reasons,
+      causalEventLinks: linkedEventsForEmotion(emotion, dayEvents, normalizeHumanTextIds),
+    };
+  });
+}
+
+function latestEmotionChangeSummary(reasons: readonly AtlasHumanEmotionReason[]): string {
+  const [latestChange] = [...reasons].sort((left, right) => {
+    const rightChanged = Math.abs(right.delta) >= EMOTION_CHANGE_EPSILON ? 1 : 0;
+    const leftChanged = Math.abs(left.delta) >= EMOTION_CHANGE_EPSILON ? 1 : 0;
+
+    return rightChanged - leftChanged || Math.abs(right.delta) - Math.abs(left.delta);
+  });
+
+  return latestChange?.summary ?? "No tracked emotion changed during the latest day.";
+}
+
+function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHumanMva {
+  const dayEndTick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
+  const dayStartTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const result = getHumanMvaStateAtTick(world, dayEndTick);
+  const dayStartResult = getHumanMvaStateAtTick(world, dayStartTick);
+  const dayStartAgentById = new Map(dayStartResult.state.agents.map((agent) => [agent.id, agent]));
+  const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
+  const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
+  const normalizeHumanTextIds = (value: string) => result.state.agents.reduce(
+    (text, agent) => text.split(agent.id).join(displayId(agent.id)),
+    value,
+  ).replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
+  const latestDayEvents = result.state.causalEvents.filter((event) => {
+    const eventTick = BigInt(event.tick);
+
+    return eventTick > dayStartTick && eventTick <= dayEndTick;
+  });
+
+  return {
+    tick: result.state.tick,
+    agents: result.state.agents.map((agent) => {
+      const otherAgent = result.state.agents.find((candidate) => candidate.id !== agent.id) ?? null;
+      const relationshipToOther = otherAgent
+        ? result.state.relationships.find((relationship) =>
+          relationship.fromAgentId === agent.id && relationship.toAgentId === otherAgent.id,
+        ) ?? null
+        : null;
+      const latestMemory = [...result.state.memories]
+        .reverse()
+        .find((memory) => memory.agentId === agent.id) ?? null;
+      const latestCausalEvent = [...result.state.causalEvents]
+        .reverse()
+        .find((event) => event.agentIds.includes(agent.id)) ?? null;
+      const agentDayEvents = latestDayEvents.filter((event) => event.agentIds.includes(agent.id));
+      const emotionReasons = buildHumanEmotionReasons(
+        dayStartAgentById.get(agent.id) ?? agent,
+        agent,
+        agentDayEvents,
+        normalizeHumanTextIds,
+      );
+
+      return {
+        id: displayId(agent.id),
+        label: agent.sex === "male" ? "First Male Human" : "First Female Human",
+        sex: agent.sex,
+        approxAgeYears: agent.approxAgeYears,
+        currentCellId: agent.currentCellId,
+        currentAction: agent.lastDecision?.action ?? null,
+        needs: agent.needs,
+        emotions: agent.emotions,
+        currentMotivation: agent.motivations ? (Object.entries(agent.motivations).sort((a,b)=> b[1]-a[1])[0]?.[0] ?? null) : null,
+        motivationScores: agent.motivations ?? undefined,
+        confidence: (agent as any).confidence ?? undefined,
+        familiarity: (agent as any).familiarityByCell?.[agent.currentCellId] ?? undefined,
+        curiosityProfile: (agent as any).curiosityProfile ?? undefined,
+        relationshipDrivers: relationshipToOther ? {
+          trust: relationshipToOther.trust,
+          affection: relationshipToOther.affection,
+          attraction: relationshipToOther.attraction,
+          companionship: relationshipToOther.companionship,
+        } : null,
+        decisionExplanation: (() => {
+          const causes = agent.lastDecision?.causes ?? {} as Record<string, unknown>;
+          const parts: string[] = [];
+          if ((agent.needs.hunger) < 0.45 && (agent.needs.thirst) < 0.45 && (agent.needs.fatigue) < 0.5) {
+            parts.push("Hunger and thirst were satisfied.");
+          }
+          const topMotivation = (causes as any).topMotivation as string | undefined;
+          if (topMotivation) {
+            parts.push(`Current motivation shifted to ${topMotivation}.`);
+          }
+          if ((agent as any).curiosityProfile) {
+            const cp = (agent as any).curiosityProfile;
+            if (cp.environmental >= (cp.social ?? 0)) {
+              parts.push("Environmental curiosity exceeded social motivation.");
+            }
+          }
+          if (agent.lastDecision?.action) {
+            const label = agent.lastDecision.action === "explore" ? "Explore Nearby" : agent.lastDecision.action;
+            parts.push(`Selected ${label}.`);
+          }
+          return parts.length ? parts.join(" ") : null;
+        })(),
+        currentGoal: (agent as any).currentGoal?.text ?? null,
+        relationshipToOther: relationshipToOther ? {
+          ...relationshipToOther,
+          worldId: "atlas-human-mva",
+          fromAgentId: displayId(relationshipToOther.fromAgentId),
+          toAgentId: displayId(relationshipToOther.toAgentId),
+        } : null,
+        latestMemory: latestMemory
+          ? {
+            tick: latestMemory.tick,
+            eventType: latestMemory.eventType,
+            summary: normalizeHumanTextIds(latestMemory.summary),
+          }
+          : null,
+        latestCausalEvent: latestCausalEvent
+          ? {
+            tick: latestCausalEvent.tick,
+            type: latestCausalEvent.type,
+            title: latestCausalEvent.title,
+            summary: normalizeHumanTextIds(latestCausalEvent.summary),
+          }
+          : null,
+        latestEmotionChangeSummary: latestEmotionChangeSummary(emotionReasons),
+        emotionReasons,
+      };
+    }),
+    causalEvents: result.state.causalEvents.slice(-8).map((event) => ({
+      id: normalizeHumanTextIds(event.id),
+      tick: event.tick,
+      type: event.type,
+      title: event.title,
+      summary: normalizeHumanTextIds(event.summary),
+      agentIds: event.agentIds.map(displayId),
+      cellId: event.cellId,
+    })),
+    chroniclerEntries: result.chroniclerReport.entries.slice(-8).map((entry) => ({
+      ...entry,
+      eventId: normalizeHumanTextIds(entry.eventId),
+    })),
+    canSimulateOneHumanDay: true,
+    forbiddenSystemsImplemented: [],
+  };
+}
 export function toAtlasWorldOption(world: WorldWithPlanet): AtlasWorldOption {
   return {
     id: world.id,
@@ -515,7 +929,7 @@ export function normalizeAtlasSelectedDay(world: WorldWithPlanet, requestedDay?:
   return clamp(Math.round(requestedDay), 1, yearLengthDays);
 }
 
-export function buildAtlasSnapshot(
+function buildAtlasSnapshotUncached(
   world: WorldWithPlanet,
   selectedDay = getConfiguredCurrentDay(world),
   grid: SpatialGrid = createGrid(),
@@ -568,6 +982,7 @@ export function buildAtlasSnapshot(
       weatherState.summary,
       resourceState.summary,
     ),
+    humans: buildAtlasHumans(world, normalizedDay),
     fingerprint: {
       seed: fingerprint.seed,
       hash: fingerprint.hash,
@@ -597,3 +1012,25 @@ export function buildAtlasSnapshot(
   };
 }
 
+export function buildAtlasSnapshot(
+  world: WorldWithPlanet,
+  selectedDay = getConfiguredCurrentDay(world),
+  grid: SpatialGrid = createGrid(),
+): AtlasSnapshot {
+  return buildTimedAtlasSnapshot(world, selectedDay, grid).value;
+}
+
+export function buildTimedAtlasSnapshot(
+  world: WorldWithPlanet,
+  selectedDay = getConfiguredCurrentDay(world),
+  grid: SpatialGrid = createGrid(),
+): TimedSnapshotValue<AtlasSnapshot> {
+  const normalizedDay = normalizeAtlasSelectedDay(world, selectedDay);
+  const key = getSnapshotWorldKey(world, grid, `atlas:${normalizedDay}`);
+  return memoizeSnapshotValue(
+    "atlas:snapshot",
+    key,
+    () => buildAtlasSnapshotUncached(world, normalizedDay, grid),
+    grid.getGridSummary().totalCells,
+  );
+}

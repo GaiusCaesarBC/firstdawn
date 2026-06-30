@@ -2,6 +2,10 @@ import type { Prisma, World } from "@prisma/client";
 
 import type { DeterministicSystemEventBus } from "../event-bus";
 import type { DeterministicRandom } from "../random";
+import type {
+  SimulationFidelityMode,
+  SimulationFidelityPlan,
+} from "../simulation-limits";
 
 type SimulationClient = Prisma.TransactionClient | PrismaClientLike;
 
@@ -35,6 +39,8 @@ export type SimulationSystemContext = {
   eventBus: DeterministicSystemEventBus;
   metrics: SimulationMetricsCollector;
   logger: SimulationLogger;
+  fidelityMode?: SimulationFidelityMode;
+  fidelity?: SimulationFidelityPlan;
 };
 
 export type SimulationRepositories = {

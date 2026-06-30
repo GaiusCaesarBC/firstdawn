@@ -73,3 +73,6 @@ This milestone enhances the Planet Visualization Atlas with search-driven naviga
 - All changes are isolated to the atlas client UI; simulation engines and data builders remain untouched.
 - Auto-scaling decisions are conservative and can be tuned per project needs.
 - Search history is stored in `localStorage` under `atlasSearchHistory`.
+
+## Related Atlas Sections
+- See [ATLAS_DISCOVERY_ENGINE.md](ATLAS_DISCOVERY_ENGINE.md) for the Discovery Engine architecture and snapshot fields.

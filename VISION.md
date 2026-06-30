@@ -1,87 +1,252 @@
-# First Dawn
+﻿# First Dawn Vision
 
-## A New World Is Coming
+First Dawn exists to answer one question:
 
-We are building something different.
+Can we build a world where civilization emerges from consistent causes rather than scripted outcomes?
 
-Not just a project. Not just a concept.
+## Mission
 
-A living, evolving world.
+Build the most believable deterministic artificial civilization ever created.
 
----
+First Dawn is a long-term simulation of a world, its ecosystems, its intelligent beings, and the histories they create through survival, memory, relationship, discovery, conflict, cooperation, and accumulated knowledge.
 
-## What Is First Dawn?
+## Core Philosophy
 
-First Dawn is an experiment in artificial civilization.
+### The Simulation Is The Product
 
-A place where intelligent beings are born, grow, learn, form relationships, build cultures, and shape their own history.
+The website is not the main artifact. The user interface is a window into the artifact.
 
-No predetermined outcomes.
+The product is the world itself:
 
-Just a world governed by rules - and everything that emerges from them.
+- its physical laws
+- its climate
+- its ecosystems
+- its agents
+- its memory
+- its histories
+- its consequences
 
----
+If the website vanished, the simulation should still make sense. If no observer is watching, the world should still be able to continue.
 
-## Why It Matters
+### The Website Is The Observatory
 
-Imagine a world that continues whether you are watching or not.
+The observer interface exists to inspect, understand, and steward the simulation.
 
-A world where every moment is real to those inside it.
+It may show maps, histories, health, events, charts, and summaries. It may provide controlled development operations. It may help humans outside the simulation understand why events happened.
 
-Where discovery, conflict, love, and innovation all arise naturally.
+It must never become the source of truth.
 
-First Dawn is not about controlling a story.
+The observer can see the world. The world cannot see the observer.
 
-It is about witnessing one unfold.
+### Civilization Must Emerge Rather Than Be Scripted
 
----
+Civilization should not be unlocked by a tech tree, spawned by a milestone, or forced by a narrative plan.
 
-## Our Approach
+Cities, governments, religions, economies, sciences, and cultures should arise only when the conditions that make them possible have accumulated:
 
-We do not act as rulers or authors.
+- population pressure
+- resource constraints
+- memory
+- language
+- teaching
+- shared belief
+- cooperation
+- conflict
+- geography
+- climate
+- tools
+- evidence
+- survival need
 
-We design the foundation - the laws of the universe - and let everything else evolve.
+The simulation should not decide that a civilization is "supposed" to exist. A civilization should exist because enough causes made it happen.
 
-The goal is simple:
+### History Must Be Explainable
 
-Create something so dynamic, even we do not know what will happen next.
+First Dawn is not just interested in what happened. It is interested in why it happened.
 
----
+Every meaningful historical event should eventually be traceable through evidence:
 
-## The Beginning
+- environmental conditions
+- prior events
+- agent memories
+- agent beliefs
+- relationships
+- resource pressures
+- ecological changes
+- population pressures
+- decisions and failures
 
-Every great story starts somewhere.
+A history that cannot be explained is only decoration. First Dawn aims for history with causality.
 
-First Dawn begins with two individuals in an unfamiliar world.
+### Every Consequence Should Have A Cause
 
-They have only what they need to survive:
+No major change should appear without a source.
 
-* Language
-* Curiosity
-* Emotion
-* Reasoning
-* The ability to learn
-* The ability to love
-* The instinct to survive
+If a population collapses, the simulation should know whether it came from starvation, predation, climate stress, disease, migration failure, habitat loss, or a combination of pressures.
 
-Everything else must be discovered.
+If a human belief changes, the simulation should know whether it came from perception, memory, communication, teaching, repeated observation, contradiction, or fear.
 
----
+If a culture eventually forms, it should be possible to inspect the repeated behaviors and shared knowledge that preceded it.
 
-## What Comes Next
+### Every Cause Should Leave Evidence
 
-This is just the beginning.
+The world should not merely update numbers. It should leave records.
 
-We are securing the foundation, building the experience, and preparing to share First Dawn with the world.
+Evidence may appear as:
 
-Stay tuned.
+- events
+- memories
+- relationships
+- discoveries
+- ecological history
+- adaptation trends
+- world health diagnostics
+- atlas layers
+- tick metadata
+- chronicler summaries
 
-Something extraordinary is on the horizon.
+Evidence is what allows the observer to understand the world without inventing explanations.
 
----
+### Intelligence Should Emerge From Interaction With The World
 
-## Coming Soon
+Human intelligence in First Dawn should not begin as omniscience or scripted destiny.
 
-The world of First Dawn is taking shape.
+Agents should learn by:
 
-Be there when it begins.
+- needing water
+- seeking food
+- feeling fear
+- remembering safety
+- noticing patterns
+- communicating
+- misunderstanding
+- teaching
+- trusting or distrusting
+- trying actions
+- failing
+- repeating what works
+
+Intelligence should be grounded in a body, a place, other agents, limited information, and consequences.
+
+## Long-Term Goals
+
+First Dawn should eventually simulate the full arc from an uninhabited planet to complex civilizations.
+
+### Ecosystems
+
+The world should support terrain, water, climate, weather, resources, plants, animals, adaptation, migration, disturbances, succession, collapse, and recovery.
+
+Ecosystems should create real pressures for intelligent agents. Food, danger, water, seasons, disease, and resource scarcity should matter.
+
+### Human Life
+
+The first humans should not be civilization tokens. They should be embodied agents with needs, emotions, memory, beliefs, relationships, communication, teaching, reproduction constraints, and mortality.
+
+Families, childhood, aging, death, grief, attachment, dependency, cooperation, conflict, and care should emerge from agent-level state.
+
+### Scientific Discovery
+
+Discovery should emerge from observation, repetition, contradiction, teaching, and shared evidence.
+
+Fire, tools, medicine, agriculture, astronomy, engineering, and industry should not be hardcoded achievements. They should arise when agents observe reliable patterns and learn to reproduce effects.
+
+### Language
+
+Language should begin as practical communication and grow through repeated use.
+
+Agents should communicate needs, warnings, requests, locations, intentions, observations, memories, and eventually abstractions. Language should evolve because it improves coordination, teaching, memory, and shared knowledge.
+
+### Religion
+
+Religion must not be inserted as a predefined institution.
+
+If religion emerges, it should arise from meaning-making, fear, death, memory, ritualized behavior, shared stories, unexplained events, authority, tradition, and community identity.
+
+### Governments
+
+Government must not be hardcoded as a phase.
+
+If governance emerges, it should arise from group size, conflict resolution, resource management, leadership, trust, coercion, legitimacy, tradition, law, and repeated coordination needs.
+
+### Economies
+
+Economies should arise from scarcity, specialization, exchange, trust, accounting, storage, trade routes, risk, surplus, and social enforcement.
+
+There should be no economy until agents have reasons to exchange, remember obligations, value goods, and organize production.
+
+### Cultures
+
+Culture should be accumulated behavior, memory, teaching, imitation, preference, belief, language, ritual, art, technology, food, social norms, and shared history.
+
+Culture should not be a skin applied to a population. It should be the residue of lived experience.
+
+### Industrialization
+
+Industry should require many prerequisites:
+
+- resources
+- tools
+- energy sources
+- metallurgy
+- measurement
+- transport
+- specialization
+- institutions
+- knowledge preservation
+- engineering
+- labor organization
+
+It should be rare, contingent, and historically explainable.
+
+### Exploration
+
+Exploration should be driven by curiosity, necessity, trade, migration, danger, resource search, prestige, conflict, navigation knowledge, and technology.
+
+Maps should become meaningful because agents discover places, remember routes, and communicate geography.
+
+### Modern Civilizations
+
+Modern civilization should be an eventual outcome, not an assumption.
+
+If a world reaches modernity, it should be because its history supports it. Other worlds may collapse, stagnate, fragment, remain pastoral, or develop in surprising ways.
+
+## What Must Never Be Hardcoded
+
+First Dawn must not hardcode:
+
+- guaranteed survival
+- guaranteed romance
+- guaranteed reproduction
+- scripted first words
+- scripted discoveries
+- technology trees as destiny
+- tribes appearing on schedule
+- religion appearing on schedule
+- government appearing on schedule
+- cities appearing on schedule
+- modernity as inevitable
+- authorial intervention
+- observer-driven agent decisions
+
+The world may produce familiar outcomes, but only through simulated causes.
+
+## Success Criteria
+
+First Dawn succeeds when observers can watch a civilization form and believe that it happened because the world made it possible.
+
+Success looks like:
+
+- A deterministic world that can be replayed and inspected.
+- Ecosystems that change for understandable reasons.
+- Agents that survive, fail, learn, remember, communicate, and affect each other.
+- Discoveries that emerge from repeated evidence.
+- Cultures that reflect accumulated experience.
+- Institutions that arise from social pressures.
+- Histories that are surprising but explainable.
+- Multiple worlds that diverge from different seeds, geography, and early events.
+- A UI that helps observers understand without controlling the inhabitants.
+- Future developers able to extend the world without breaking its causal foundation.
+
+The highest goal is not a world that always becomes impressive.
+
+The highest goal is a world that always remains honest to its causes.

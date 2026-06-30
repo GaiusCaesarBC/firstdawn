@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getWorldHealthSummary } from "../../../../lib/simulation/world-health";
+import { getWorldHealthSummaryWithHumans } from "../../../../lib/simulation/world-health";
 import { listWorlds } from "../../../../lib/worlds/world-lifecycle";
 
 export const dynamic = "force-dynamic";
@@ -20,5 +20,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
   }
 
-  return NextResponse.json(await getWorldHealthSummary(world.id));
+  return NextResponse.json(await getWorldHealthSummaryWithHumans(world.id));
 }

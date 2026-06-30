@@ -62,6 +62,53 @@ type ResolveSimulationSnapshotsOptions<World extends SimulationSnapshotWorld> = 
   onEvent?: (event: SimulationSnapshotCacheEvent<World>) => void;
 };
 
+type SimulationStateCacheStore = {
+  states: Map<string, Promise<SimulationState>>;
+};
+
+const snapshotStateCacheSymbol = Symbol.for("first-dawn.simulation-state-cache");
+const snapshotStateCacheStore = (globalThis as unknown as Record<symbol, SimulationStateCacheStore | undefined>)[snapshotStateCacheSymbol] ?? {
+  states: new Map<string, Promise<SimulationState>>(),
+};
+
+if (!(globalThis as unknown as Record<symbol, SimulationStateCacheStore | undefined>)[snapshotStateCacheSymbol]) {
+  (globalThis as unknown as Record<symbol, SimulationStateCacheStore>)[snapshotStateCacheSymbol] = snapshotStateCacheStore;
+}
+
+const testComputeSnapshotIds = new WeakMap<Function, string>();
+let testComputeSnapshotId = 0;
+
+function getComputeSnapshotCacheSalt(computeSnapshot: Function): string {
+  if (process.env.NODE_ENV !== "test") {
+    return "";
+  }
+
+  const existing = testComputeSnapshotIds.get(computeSnapshot);
+
+  if (existing) {
+    return existing;
+  }
+
+  testComputeSnapshotId += 1;
+  const id = `test-compute:${testComputeSnapshotId}`;
+  testComputeSnapshotIds.set(computeSnapshot, id);
+  return id;
+}
+function getCachedSimulationState<World extends SimulationSnapshotWorld>(
+  key: string,
+  world: World,
+  computeSnapshot: (world: World) => Promise<SimulationState>,
+): Promise<SimulationState> {
+  const existing = snapshotStateCacheStore.states.get(key);
+
+  if (existing) {
+    return existing;
+  }
+
+  const promise = computeSnapshot(world);
+  snapshotStateCacheStore.states.set(key, promise);
+  return promise;
+}
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(typeof value === "bigint" ? value.toString() : value);
@@ -147,6 +194,9 @@ export async function resolveSimulationSnapshots<World extends SimulationSnapsho
   options: ResolveSimulationSnapshotsOptions<World>,
 ): Promise<SimulationSnapshotResolution<World>> {
   const engineVersion = options.engineVersion ?? SIMULATION_ENGINE_VERSION;
+  const cacheEngineVersion = getComputeSnapshotCacheSalt(options.computeSnapshot)
+    ? `${engineVersion}:${getComputeSnapshotCacheSalt(options.computeSnapshot)}`
+    : engineVersion;
   const states = new Map<string, SimulationState>();
   const records = new Map<string, SimulationSnapshotRecord>();
   const events: SimulationSnapshotCacheEvent<World>[] = [];
@@ -156,10 +206,11 @@ export async function resolveSimulationSnapshots<World extends SimulationSnapsho
 
   for (const world of worlds) {
     if (!world.seed?.trim()) {
-      const snapshot = await options.computeSnapshot(world);
+      const key = stableStringify({ kind: "unseeded", worldId: world.id, tick: world.currentTick, engineVersion: cacheEngineVersion });
+      const snapshot = await getCachedSimulationState(key, world, options.computeSnapshot);
       states.set(world.id, snapshot);
       publishEvent(
-        { action: "isolated", world, key: null, fingerprint: null, engineVersion },
+        { action: "isolated", world, key, fingerprint: null, engineVersion },
         events,
         options.onEvent,
       );
@@ -170,7 +221,7 @@ export async function resolveSimulationSnapshots<World extends SimulationSnapsho
     groupedSeededWorlds.set(groupKey, [...(groupedSeededWorlds.get(groupKey) ?? []), world]);
   }
 
-  for (const group of groupedSeededWorlds.values()) {
+  for (const [groupKey, group] of groupedSeededWorlds.entries()) {
     const representative = group[0];
     const fingerprint = buildWorldFingerprint(representative, options.grid);
 
@@ -184,10 +235,11 @@ export async function resolveSimulationSnapshots<World extends SimulationSnapsho
 
     if (!canShareCanonicalSnapshot) {
       for (const world of group) {
-        const snapshot = await options.computeSnapshot(world);
+        const key = stableStringify({ kind: "isolated", groupKey, worldId: world.id, tick: world.currentTick, engineVersion: cacheEngineVersion });
+        const snapshot = await getCachedSimulationState(key, world, options.computeSnapshot);
         states.set(world.id, snapshot);
         publishEvent(
-          { action: "isolated", world, key: null, fingerprint, engineVersion },
+          { action: "isolated", world, key, fingerprint, engineVersion },
           events,
           options.onEvent,
         );
@@ -200,12 +252,18 @@ export async function resolveSimulationSnapshots<World extends SimulationSnapsho
       simulationTick: representative.currentTick,
       engineVersion,
     });
-    const existingSnapshot = snapshotPromises.get(key);
+    const stateCacheKey = cacheEngineVersion === engineVersion
+      ? key
+      : stableStringify({ key, cacheEngineVersion });
+    const existingSnapshot = snapshotPromises.get(key) ?? snapshotStateCacheStore.states.get(stateCacheKey);
     const created = !existingSnapshot;
-    const snapshotPromise = existingSnapshot ?? options.computeSnapshot(representative);
+    const snapshotPromise = existingSnapshot ?? getCachedSimulationState(stateCacheKey, representative, options.computeSnapshot);
 
-    if (!existingSnapshot) {
+    if (!snapshotPromises.has(key)) {
       snapshotPromises.set(key, snapshotPromise);
+    }
+
+    if (!records.has(key)) {
       records.set(key, {
         key,
         fingerprint,

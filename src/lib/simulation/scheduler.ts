@@ -18,6 +18,15 @@ import { getPlanetResourceSummary, type PlanetResourceSummary } from "./resource
 import { getTerrainSummary, type TerrainSummary } from "./terrain-engine";
 import { getWeatherSummary, type WeatherSummary } from "./weather-engine";
 import {
+  getConfiguredAccurateMaxUnconfirmedTicks,
+  getMaxSimulationTicks,
+  getSimulationFidelityPlan,
+  normalizeSimulationFidelityMode,
+  type SimulationFidelityMode,
+  type SimulationFidelityPlan,
+  type SimulationTimeConfig,
+} from "./simulation-limits";
+import {
   DEFAULT_SIMULATION_SYSTEMS,
   type SimulationMetricsCollector,
   type SimulationSystem,
@@ -29,7 +38,11 @@ import {
 import { prisma } from "../worlds/world-lifecycle";
 import { createHrTimer } from "../utils/timing";
 import { createGrid, type SpatialGrid } from "./grid/grid";
-
+import {
+  getSnapshotWorldKey,
+  memoizeSnapshotValueAsync,
+  type SnapshotTiming,
+} from "./snapshot-performance";
 export type TickExecutionResult = {
   worldId: string;
   tick: bigint;
@@ -37,6 +50,32 @@ export type TickExecutionResult = {
   durationMs: number;
   systemCount: number;
   failedSystems: string[];
+};
+
+export type SimulationRunSummary = {
+  worldId: string;
+  runId: string;
+  requestedTicks: number;
+  completedTicks: number;
+  firstTick: bigint | null;
+  lastTick: bigint | null;
+  success: boolean;
+  durationMs: number;
+  checkpointCount: number;
+  failedSystems: string[];
+};
+
+export type SimulationRunOptions = {
+  fidelityMode?: SimulationFidelityMode | string | null;
+  confirmAccurateLongRun?: boolean;
+};
+
+type TickExecutionOptions = SimulationRunOptions & {
+  targetTick?: bigint;
+  persistEvents?: boolean;
+  persistSimulationTick?: boolean;
+  runPlan?: SimulationFidelityPlan;
+  checkpoint?: boolean;
 };
 
 export type SimulationState = {
@@ -57,11 +96,13 @@ export type SimulationState = {
   resourceSummary: PlanetResourceSummary | null;
   biomeSummary: BiomeSummary | null;
   plantSummary: PlantSummary | null;
+  summaryTimings: Record<string, SnapshotTiming>;
 };
 
 export type SimulationSchedulerErrorCode =
   | "INVALID_TICK_COUNT"
   | "INVALID_TIME_SCALE"
+  | "ACCURATE_RUN_CONFIRMATION_REQUIRED"
   | "PRODUCTION_ADVANCE_BLOCKED"
   | "SIMULATION_NOT_ACTIVE"
   | "WORLD_NOT_FOUND"
@@ -111,13 +152,59 @@ function assertRunnableWorld(world: World): void {
   }
 }
 
-function validateTickCount(count: number): void {
-  if (!Number.isInteger(count) || count < 1 || count > 10_000) {
+function getWorldTimeConfig(world: SimulationTimeConfig): SimulationTimeConfig {
+  return {
+    tickDurationSeconds: world.tickDurationSeconds,
+    dayLengthSeconds: world.dayLengthSeconds,
+    yearLengthDays: world.yearLengthDays,
+  };
+}
+
+function validateTickCount(count: number, maxTicks: number): void {
+  if (!Number.isInteger(count) || count < 1 || count > maxTicks) {
     throw new SimulationSchedulerError(
-      "advanceTicks count must be an integer between 1 and 10000.",
+      `advanceTicks count must be an integer between 1 and ${maxTicks.toLocaleString("en-US")}.`,
       "INVALID_TICK_COUNT",
     );
   }
+}
+
+function createRunPlan(
+  world: SimulationTimeConfig,
+  count: number,
+  options: SimulationRunOptions = {},
+): SimulationFidelityPlan {
+  const timeConfig = getWorldTimeConfig(world);
+
+  validateTickCount(count, getMaxSimulationTicks(timeConfig));
+
+  const mode = normalizeSimulationFidelityMode(options.fidelityMode);
+  const plan = getSimulationFidelityPlan(mode, count, timeConfig);
+
+  if (
+    plan.mode === "accurate" &&
+    count > getConfiguredAccurateMaxUnconfirmedTicks() &&
+    !options.confirmAccurateLongRun
+  ) {
+    throw new SimulationSchedulerError(
+      `Accurate Mode run requests above ${getConfiguredAccurateMaxUnconfirmedTicks().toLocaleString("en-US")} ticks require explicit confirmation. Choose Fast or Turbo Test for approximate long-range testing.`,
+      "ACCURATE_RUN_CONFIRMATION_REQUIRED",
+    );
+  }
+
+  return plan;
+}
+
+function isCadenceTick(completedTicks: number, totalTicks: number, everyTicks: number): boolean {
+  return completedTicks >= totalTicks || completedTicks % Math.max(1, everyTicks) === 0;
+}
+
+function shouldPersistEvents(plan: SimulationFidelityPlan, checkpoint: boolean): boolean {
+  return plan.eventLogging === "full" || checkpoint;
+}
+
+function shouldPersistSimulationTick(plan: SimulationFidelityPlan, completedTicks: number, checkpoint: boolean): boolean {
+  return plan.mode === "accurate" || checkpoint || isCadenceTick(completedTicks, plan.totalTicks, plan.persistTickEveryTicks);
 }
 
 function normalizeSystemResult(result: SimulationSystemResult | undefined): SimulationSystemResult {
@@ -315,12 +402,16 @@ export class SimulationScheduler {
     return this.defaultScheduler.listSystems();
   }
 
-  static advanceTick(worldId: string): Promise<TickExecutionResult> {
-    return this.defaultScheduler.advanceTick(worldId);
+  static advanceTick(worldId: string, options: SimulationRunOptions = {}): Promise<TickExecutionResult> {
+    return this.defaultScheduler.advanceTick(worldId, options);
   }
 
-  static advanceTicks(worldId: string, count: number): Promise<TickExecutionResult[]> {
-    return this.defaultScheduler.advanceTicks(worldId, count);
+  static advanceTicks(worldId: string, count: number, options: SimulationRunOptions = {}): Promise<TickExecutionResult[]> {
+    return this.defaultScheduler.advanceTicks(worldId, count, options);
+  }
+
+  static advanceTicksWithCheckpoints(worldId: string, count: number, options: SimulationRunOptions = {}): Promise<SimulationRunSummary> {
+    return this.defaultScheduler.advanceTicksWithCheckpoints(worldId, count, options);
   }
 
   static pauseWorldSimulation(worldId: string): Promise<SimulationState> {
@@ -356,7 +447,7 @@ export class SimulationScheduler {
     return [...this.systems];
   }
 
-  async advanceTick(worldId: string): Promise<TickExecutionResult> {
+  async advanceTick(worldId: string, options: TickExecutionOptions = {}): Promise<TickExecutionResult> {
     assertValidSystems(this.systems);
 
     const startedAt = new Date();
@@ -376,12 +467,19 @@ export class SimulationScheduler {
 
         assertRunnableWorld(world);
 
+        const plan = options.runPlan ?? getSimulationFidelityPlan(
+          normalizeSimulationFidelityMode(options.fidelityMode),
+          1,
+          getWorldTimeConfig(world),
+        );
+
         const latestTick = await client.simulationTick.aggregate({
           _max: { tick: true },
           where: { worldId: world.id },
         });
         const fromTick = latestKnownTick(world, latestTick._max.tick);
-        const tick = fromTick + 1n;
+        const requestedTargetTick = options.targetTick && options.targetTick > fromTick ? options.targetTick : fromTick + 1n;
+        const tick = requestedTargetTick;
         const tickWorld = fromTick === world.currentTick ? world : { ...world, currentTick: fromTick };
         const eventBus = new DeterministicSystemEventBus();
         const cache = new Map<string, unknown>();
@@ -427,6 +525,8 @@ export class SimulationScheduler {
             eventBus,
             metrics: metricsCollector,
             logger: createSystemLogger(system),
+            fidelityMode: plan.mode,
+            fidelity: plan,
           };
           const beforeMemory = getHeapUsed();
           const systemStartedMs = Date.now();
@@ -518,51 +618,66 @@ export class SimulationScheduler {
         const completedAt = new Date();
         const durationMs = Math.max(0, completedAt.getTime() - startedMs);
         const collectedEvents = eventBus.collect();
+        const persistEvents = options.persistEvents ?? true;
+        const persistSimulationTick = options.persistSimulationTick ?? true;
 
         await client.world.update({
           where: { id: world.id },
           data: { currentTick: tick },
         });
 
-        await client.simulationTick.create({
-          data: {
-            worldId: world.id,
-            tick,
-            durationMs,
-            success,
-            systemCount: systemResults.length,
-            failedSystemCount,
-            startedAt,
-            completedAt,
-            metadata: {
-              fromTick: fromTick.toString(),
-              toTick: tick.toString(),
-              timeScale: world.timeScale,
-              eventsEmitted: collectedEvents.length,
-              profiling: {
-                totalDurationMs: durationMs,
-                totalCellsProcessed: systemResults.reduce((sum, result) => sum + result.metrics.cellsProcessed, 0),
-                totalEntitiesProcessed: systemResults.reduce((sum, result) => sum + result.metrics.entitiesProcessed, 0),
+        if (persistSimulationTick) {
+          await client.simulationTick.create({
+            data: {
+              worldId: world.id,
+              tick,
+              durationMs,
+              success,
+              systemCount: systemResults.length,
+              failedSystemCount,
+              startedAt,
+              completedAt,
+              metadata: {
+                fromTick: fromTick.toString(),
+                toTick: tick.toString(),
+                timeScale: world.timeScale,
+                fidelityMode: plan.mode,
+                fidelityLabel: plan.label,
+                approximate: plan.approximate,
+                tickStride: plan.tickStride,
+                eventLogging: plan.eventLogging,
+                chronicler: plan.chronicler,
+                atlasSnapshots: plan.atlasSnapshots,
+                checkpoint: Boolean(options.checkpoint),
+                eventsEmitted: collectedEvents.length,
+                eventsPersisted: persistEvents ? collectedEvents.length : 0,
+                profiling: {
+                  totalDurationMs: durationMs,
+                  totalCellsProcessed: systemResults.reduce((sum, result) => sum + result.metrics.cellsProcessed, 0),
+                  totalEntitiesProcessed: systemResults.reduce((sum, result) => sum + result.metrics.entitiesProcessed, 0),
+                },
+                pipeline: systemResults.map((result) => ({
+                  id: result.systemId,
+                  name: result.systemName,
+                  label: result.systemLabel,
+                  version: result.systemVersion,
+                  dependencies: result.dependencies,
+                  success: result.success,
+                  error: result.error ?? null,
+                  metadata: result.metadata ?? null,
+                  metrics: result.metrics,
+                  health: result.health,
+                })),
+                failedSystems: failedSystems.map((result) => result.systemName),
+                health: aggregateHealth(systemResults.map((result) => result.health)),
               },
-              pipeline: systemResults.map((result) => ({
-                id: result.systemId,
-                name: result.systemName,
-                label: result.systemLabel,
-                version: result.systemVersion,
-                dependencies: result.dependencies,
-                success: result.success,
-                error: result.error ?? null,
-                metadata: result.metadata ?? null,
-                metrics: result.metrics,
-                health: result.health,
-              })),
-              failedSystems: failedSystems.map((result) => result.systemName),
-              health: aggregateHealth(systemResults.map((result) => result.health)),
             },
-          },
-        });
+          });
+        }
 
-        await persistCollectedEvents(client, collectedEvents);
+        if (persistEvents) {
+          await persistCollectedEvents(client, collectedEvents);
+        }
 
         await this.eventBus.emit("afterTick", {
           worldId: world.id,
@@ -596,16 +711,147 @@ export class SimulationScheduler {
     );
   }
 
-  async advanceTicks(worldId: string, count: number): Promise<TickExecutionResult[]> {
-    validateTickCount(count);
+  async advanceTicks(
+    worldId: string,
+    count: number,
+    options: SimulationRunOptions = {},
+  ): Promise<TickExecutionResult[]> {
+    const world = await prisma.world.findUnique({ where: { id: worldId } });
 
+    if (!world) {
+      throw new SimulationSchedulerError(`World not found: ${worldId}`, "WORLD_NOT_FOUND");
+    }
+
+    const plan = createRunPlan(world, count, options);
+    const latestTick = await prisma.simulationTick.aggregate({
+      _max: { tick: true },
+      where: { worldId: world.id },
+    });
+    const baseTick = latestKnownTick(world, latestTick._max.tick);
     const results: TickExecutionResult[] = [];
 
-    for (let index = 0; index < count; index += 1) {
-      results.push(await this.advanceTick(worldId));
+    for (let completedTicks = 0; completedTicks < count;) {
+      const nextCompletedTicks = Math.min(count, completedTicks + plan.tickStride);
+      const checkpoint = isCadenceTick(nextCompletedTicks, count, plan.checkpointEveryTicks);
+      const result = await this.advanceTick(worldId, {
+        ...options,
+        targetTick: baseTick + BigInt(nextCompletedTicks),
+        runPlan: plan,
+        checkpoint,
+        persistEvents: shouldPersistEvents(plan, checkpoint),
+        persistSimulationTick: shouldPersistSimulationTick(plan, nextCompletedTicks, checkpoint),
+      });
+
+      results.push(result);
+      completedTicks = nextCompletedTicks;
+
+      if (!result.success) {
+        break;
+      }
     }
 
     return results;
+  }
+
+  async advanceTicksWithCheckpoints(
+    worldId: string,
+    count: number,
+    options: SimulationRunOptions = {},
+  ): Promise<SimulationRunSummary> {
+    const world = await prisma.world.findUnique({ where: { id: worldId } });
+
+    if (!world) {
+      throw new SimulationSchedulerError(`World not found: ${worldId}`, "WORLD_NOT_FOUND");
+    }
+
+    const plan = createRunPlan(world, count, options);
+    const latestTick = await prisma.simulationTick.aggregate({
+      _max: { tick: true },
+      where: { worldId: world.id },
+    });
+    const baseTick = latestKnownTick(world, latestTick._max.tick);
+    const runId = `${worldId}-${Date.now().toString(36)}`;
+    const startedMs = Date.now();
+    const checkpointEvery = plan.checkpointEveryTicks;
+    const failedSystems = new Set<string>();
+    let completedTicks = 0;
+    let checkpointCount = 0;
+    let firstTick: bigint | null = null;
+    let lastTick: bigint | null = null;
+    let success = true;
+
+    while (completedTicks < count) {
+      const nextCompletedTicks = Math.min(count, completedTicks + plan.tickStride);
+      const checkpoint = isCadenceTick(nextCompletedTicks, count, checkpointEvery);
+      const result = await this.advanceTick(worldId, {
+        ...options,
+        targetTick: baseTick + BigInt(nextCompletedTicks),
+        runPlan: plan,
+        checkpoint,
+        persistEvents: shouldPersistEvents(plan, checkpoint),
+        persistSimulationTick: shouldPersistSimulationTick(plan, nextCompletedTicks, checkpoint),
+      });
+
+      completedTicks = nextCompletedTicks;
+      firstTick ??= result.tick;
+      lastTick = result.tick;
+
+      for (const failedSystem of result.failedSystems) {
+        failedSystems.add(failedSystem);
+      }
+
+      if (!result.success) {
+        success = false;
+      }
+
+      if (checkpoint || !result.success) {
+        checkpointCount += 1;
+
+        await prisma.worldActionLog.create({
+          data: {
+            worldId,
+            action: result.success ? "SIMULATION_RUN_CHECKPOINT" : "SIMULATION_RUN_STOPPED",
+            actor: "simulation-scheduler",
+            reason: result.success ? null : "Simulation run stopped after a failed tick.",
+            metadata: {
+              runId,
+              requestedTicks: count,
+              completedTicks,
+              checkpointEvery,
+              fidelityMode: plan.mode,
+              fidelityLabel: plan.label,
+              approximate: plan.approximate,
+              tickStride: plan.tickStride,
+              effectiveSystemTicks: plan.effectiveSystemTicks,
+              eventLogging: plan.eventLogging,
+              chronicler: plan.chronicler,
+              atlasSnapshots: plan.atlasSnapshots,
+              firstTick: firstTick?.toString() ?? null,
+              lastTick: lastTick?.toString() ?? null,
+              progressPercent: Math.round((completedTicks / count) * 10_000) / 100,
+              failedSystems: [...failedSystems],
+            },
+          },
+        });
+      }
+
+      if (!result.success) {
+        break;
+      }
+    }
+
+    return {
+      worldId,
+      runId,
+      requestedTicks: count,
+      completedTicks,
+      firstTick,
+      lastTick,
+      success,
+      durationMs: Math.max(0, Date.now() - startedMs),
+      checkpointCount,
+      failedSystems: [...failedSystems],
+    };
   }
 
   async pauseWorldSimulation(worldId: string): Promise<SimulationState> {
@@ -729,34 +975,63 @@ export class SimulationScheduler {
       throw new SimulationSchedulerError(`World not found: ${worldId}`, "WORLD_NOT_FOUND");
     }
 
-    const metrics = await timer.time("metrics", async () => getSimulationMetrics(worldId));
+    const [metrics, grid] = await Promise.all([
+      timer.time("metrics", async () => getSimulationMetrics(worldId)),
+      world.seed?.trim()
+        ? timer.time("grid", async () => createGrid())
+        : Promise.resolve(null as SpatialGrid | null),
+    ]);
 
-    let grid: SpatialGrid | null = null;
-    if (world.seed?.trim()) {
-      grid = await timer.time("grid", async () => createGrid());
+    let terrainSummary: TerrainSummary | null = null;
+    let hydrologySummary: HydrologySummary | null = null;
+    let atmosphereSummary: AtmosphericSummary | null = null;
+    let weatherSummary: WeatherSummary | null = null;
+    let resourceSummary: PlanetResourceSummary | null = null;
+    let biomeSummary: BiomeSummary | null = null;
+    let plantSummary: PlantSummary | null = null;
+    const summaryTimings: Record<string, SnapshotTiming> = {};
+
+    if (world.seed?.trim() && grid) {
+      const summaryKey = getSnapshotWorldKey(world, grid, "simulation-state");
+      const totalCells = grid.getGridSummary().totalCells;
+      const [
+        terrainResult,
+        hydrologyResult,
+        atmosphereResult,
+        weatherResult,
+        resourceResult,
+        biomeResult,
+        plantResult,
+      ] = await timer.time("summaries:cached-parallel", async () => Promise.all([
+        memoizeSnapshotValueAsync("summary:terrain", summaryKey, async () => getTerrainSummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:hydrology", summaryKey, async () => getHydrologySummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:atmosphere", summaryKey, async () => getAtmosphereSummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:weather", summaryKey, async () => getWeatherSummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:resources", summaryKey, async () => getPlanetResourceSummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:biomes", summaryKey, async () => getBiomeSummary(world, grid), totalCells),
+        memoizeSnapshotValueAsync("summary:plants", summaryKey, async () => getPlantEcologySummary(world, grid), totalCells),
+      ]));
+
+      terrainSummary = terrainResult.value;
+      hydrologySummary = hydrologyResult.value;
+      atmosphereSummary = atmosphereResult.value;
+      weatherSummary = weatherResult.value;
+      resourceSummary = resourceResult.value;
+      biomeSummary = biomeResult.value;
+      plantSummary = plantResult.value;
+
+      summaryTimings.terrain = terrainResult.timing;
+      summaryTimings.hydrology = hydrologyResult.timing;
+      summaryTimings.atmosphere = atmosphereResult.timing;
+      summaryTimings.weather = weatherResult.timing;
+      summaryTimings.resources = resourceResult.timing;
+      summaryTimings.biomes = biomeResult.timing;
+      summaryTimings.plants = plantResult.timing;
+
+      for (const [name, timing] of Object.entries(summaryTimings)) {
+        timer.record(`summary:${name}:${timing.cacheHit ? "cache-hit" : "cache-miss"}`, timing.executionTimeMs);
+      }
     }
-
-    const terrainSummary = await timer.time("summaries:terrain", async () =>
-      (world.seed?.trim() ? getTerrainSummary(world, grid!) : null),
-    );
-    const hydrologySummary = await timer.time("summaries:hydrology", async () =>
-      (world.seed?.trim() ? getHydrologySummary(world, grid!) : null),
-    );
-    const atmosphereSummary = await timer.time("summaries:atmosphere", async () =>
-      (world.seed?.trim() ? getAtmosphereSummary(world, grid!) : null),
-    );
-    const weatherSummary = await timer.time("summaries:weather", async () =>
-      (world.seed?.trim() ? getWeatherSummary(world, grid!) : null),
-    );
-    const resourceSummary = await timer.time("summaries:resources", async () =>
-      (world.seed?.trim() ? getPlanetResourceSummary(world, grid!) : null),
-    );
-    const biomeSummary = await timer.time("summaries:biomes", async () =>
-      (world.seed?.trim() ? getBiomeSummary(world, grid!) : null),
-    );
-    const plantSummary = await timer.time("summaries:plants", async () =>
-      (world.seed?.trim() ? getPlantEcologySummary(world, grid!) : null),
-    );
 
     const response = await timer.time("serialize:response", async () => ({
       worldId: world.id,
@@ -776,6 +1051,7 @@ export class SimulationScheduler {
       resourceSummary,
       biomeSummary,
       plantSummary,
+      summaryTimings,
     }));
 
     timer.logDevBreakdown(`scheduler.getSimulationState(${world.slug})`);
@@ -802,12 +1078,24 @@ function aggregateHealth(health: SimulationSystemHealth[]): SimulationSystemHeal
   return { status: "Healthy" };
 }
 
-export function advanceTick(worldId: string): Promise<TickExecutionResult> {
-  return SimulationScheduler.advanceTick(worldId);
+export function advanceTick(worldId: string, options: SimulationRunOptions = {}): Promise<TickExecutionResult> {
+  return SimulationScheduler.advanceTick(worldId, options);
 }
 
-export function advanceTicks(worldId: string, count: number): Promise<TickExecutionResult[]> {
-  return SimulationScheduler.advanceTicks(worldId, count);
+export function advanceTicks(
+  worldId: string,
+  count: number,
+  options: SimulationRunOptions = {},
+): Promise<TickExecutionResult[]> {
+  return SimulationScheduler.advanceTicks(worldId, count, options);
+}
+
+export function advanceTicksWithCheckpoints(
+  worldId: string,
+  count: number,
+  options: SimulationRunOptions = {},
+): Promise<SimulationRunSummary> {
+  return SimulationScheduler.advanceTicksWithCheckpoints(worldId, count, options);
 }
 
 export function pauseWorldSimulation(worldId: string): Promise<SimulationState> {

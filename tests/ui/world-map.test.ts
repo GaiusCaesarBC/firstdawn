@@ -320,6 +320,59 @@ describe("world map atlas ui", () => {
     });
   });
 
+
+  it("shows Human MVA markers, inspector details, and one-day action", async () => {
+    window.history.replaceState(null, "", "/worlds/map");
+    window.sessionStorage.clear();
+    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => buildAtlasSnapshot(baseWorld, day));
+    const { initialSnapshot } = renderAtlas({ fetchSnapshot });
+
+    expect(screen.getByTestId("human-inspector").textContent).toContain("First Humans");
+    expect(screen.getByTestId("human-list").textContent).toContain("First Male Human");
+    expect(screen.getByTestId("human-list").textContent).toContain("First Female Human");
+    expect(screen.getByTestId("humans-overlay-toggle")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("humans-overlay-toggle"));
+    await waitFor(() => {
+      expect(screen.getByTestId("humans-overlay-toggle").className).toContain("border-white/10");
+    });
+    fireEvent.click(screen.getByTestId("humans-overlay-toggle"));
+
+    const humanCell = initialSnapshot.cells.find((cell) => cell.id === initialSnapshot.humans.agents[0].currentCellId);
+    expect(humanCell).toBeTruthy();
+    const rect = createAtlasCoordinateTransform(initialSnapshot, getTestFitView(initialSnapshot)).cellRect(humanCell!);
+    const markerRadius = Math.min(Math.min(rect.width, rect.height) * 0.22, 13);
+    const markerGap = Math.max(markerRadius * 1.15, rect.width * 0.14);
+
+    fireEvent.click(screen.getByTestId("world-map-canvas"), {
+      clientX: rect.x + rect.width / 2 + markerGap,
+      clientY: rect.y + rect.height / 2,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("human-inspector").textContent).toContain("First Female Human");
+      expect(screen.getByTestId("cell-inspector").textContent).toContain("Humans In Cell");
+      expect(screen.getByTestId("cell-inspector").textContent).toContain("First Female Human");
+      expect(screen.getByTestId("human-inspector").textContent).toContain("Latest Memory");
+      expect(screen.getByTestId("human-inspector").textContent).toContain("Latest Causal Event");
+      expect(screen.getByTestId("human-emotion-explainability").textContent).toContain("Latest Emotion Change");
+      expect(screen.getByTestId("human-emotion-explainability").textContent).toContain("Reasons:");
+      expect(screen.getByTestId("human-emotion-explainability").textContent).toContain("Causal Event Links");
+      expect(initialSnapshot.humans.agents[0].emotionReasons).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ emotion: "fear", before: expect.any(Number), after: expect.any(Number) }),
+          expect.objectContaining({ emotion: "relief", reasons: expect.any(Array) }),
+          expect.objectContaining({ emotion: "curiosity", summary: expect.stringContaining("because") }),
+        ]),
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("simulate-human-day"));
+
+    await waitFor(() => {
+      expect(fetchSnapshot).toHaveBeenCalledWith(baseWorld.id, 2);
+    });
+  });
   it("shows future layer loading, empty, and error states", () => {
     const initialSnapshot = buildAtlasSnapshot(baseWorld, 1);
 

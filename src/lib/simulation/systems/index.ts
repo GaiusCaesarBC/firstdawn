@@ -13,6 +13,7 @@ import { eventGenerationSystem } from "./event-generation";
 import { geologySystem } from "./geology";
 import { humansSystem } from "./humans";
 import { memorySystem } from "./memory";
+import { discoverySystem } from "./discovery";
 import { metricsSystem } from "./metrics";
 import { oceansSystem } from "./oceans";
 import { physicsSystem } from "./physics";
@@ -51,7 +52,8 @@ registerSystem(withDependencies(civilizationSystem, ["humans"]));
 registerSystem(withDependencies(economySystem, ["civilization"]));
 registerSystem(withDependencies(cultureSystem, ["economy"]));
 registerSystem(withDependencies(memorySystem, ["culture"]));
-registerSystem(withDependencies(eventGenerationSystem, ["memory"]));
+registerSystem(withDependencies(discoverySystem, ["memory", "humans"]));
+registerSystem(withDependencies(eventGenerationSystem, ["discovery"]));
 registerSystem(withDependencies(metricsSystem, ["event-generation"]));
 registerSystem(withDependencies(saveStateSystem, ["metrics"]));
 

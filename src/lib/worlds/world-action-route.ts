@@ -1,7 +1,12 @@
 import { WorldEnvironment } from "@prisma/client";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { advanceTicks } from "../simulation/scheduler";
+import { advanceTicksWithCheckpoints } from "../simulation/scheduler";
+import {
+  durationToTicks,
+  normalizeSimulationFidelityMode,
+  type SimulationDurationUnit,
+} from "../simulation/simulation-limits";
 import {
   archiveWorld,
   getWorldBySlug,
@@ -21,7 +26,9 @@ const ACTION_LABELS: Record<string, string> = {
   unprotect: "unprotected",
 };
 
-const RUN_TICK_ACTION_PATTERN = /^run-(1|10|100|1000)$/;
+const RUN_TICK_ACTION_PATTERN = /^run-(\d+)$/;
+const RUN_YEAR_ACTION_PATTERN = /^run-years-(\d+)$/;
+const DURATION_UNITS = new Set<SimulationDurationUnit>(["ticks", "days", "years"]);
 
 function readFormString(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -34,9 +41,35 @@ function redirectToWorlds(request: NextRequest, key: "notice" | "error", message
   return NextResponse.redirect(url, 303);
 }
 
-function readTickRunCount(action: string): number | null {
+function readFixedTickRunCount(action: string): number | null {
   const match = RUN_TICK_ACTION_PATTERN.exec(action);
   return match ? Number(match[1]) : null;
+}
+
+function readDurationUnit(value: string): SimulationDurationUnit {
+  return DURATION_UNITS.has(value as SimulationDurationUnit)
+    ? value as SimulationDurationUnit
+    : "ticks";
+}
+
+function readTickRunCount(action: string, formData: FormData, world: {
+  tickDurationSeconds: number;
+  dayLengthSeconds: number;
+  yearLengthDays: number;
+}): number | null {
+  const yearMatch = RUN_YEAR_ACTION_PATTERN.exec(action);
+
+  if (yearMatch) {
+    return durationToTicks({ value: Number(yearMatch[1]), unit: "years" }, world);
+  }
+
+  if (action === "run-duration") {
+    const value = Number(readFormString(formData, "durationValue"));
+    const unit = readDurationUnit(readFormString(formData, "durationUnit"));
+    return durationToTicks({ value, unit }, world);
+  }
+
+  return readFixedTickRunCount(action);
 }
 
 export async function handleWorldActionPost(request: NextRequest) {
@@ -63,15 +96,22 @@ export async function handleWorldActionPost(request: NextRequest) {
       );
     }
 
-    const tickRunCount = readTickRunCount(action);
+    const tickRunCount = readTickRunCount(action, formData, world);
+    const fidelityMode = normalizeSimulationFidelityMode(readFormString(formData, "fidelityMode"));
+    const confirmAccurateLongRun = readFormString(formData, "confirmAccurateLongRun") === "on";
 
     if (tickRunCount !== null) {
-      const results = await advanceTicks(world.id, tickRunCount);
-      const lastResult = results[results.length - 1];
+      const result = await advanceTicksWithCheckpoints(world.id, tickRunCount, {
+        fidelityMode,
+        confirmAccurateLongRun,
+      });
+      const lastTick = result.lastTick?.toString() ?? world.currentTick.toString();
       return redirectToWorlds(
         request,
-        "notice",
-        `${world.name} advanced ${results.length} tick${results.length === 1 ? "" : "s"} to ${lastResult.tick.toString()}.`,
+        result.success ? "notice" : "error",
+        result.success
+          ? `${world.name} advanced ${result.completedTicks.toLocaleString("en-US")} tick${result.completedTicks === 1 ? "" : "s"} in ${fidelityMode} mode to ${lastTick}.`
+          : `${world.name} stopped after ${result.completedTicks.toLocaleString("en-US")} of ${result.requestedTicks.toLocaleString("en-US")} requested ticks. Failed systems: ${result.failedSystems.join(", ") || "unknown"}.`,
       );
     }
 

@@ -43,6 +43,23 @@ export type WorldHealthSummary = {
   systemHealthStatus: WorldHealthBadge | null;
   systemHealthDiagnostics: string[];
   badge: WorldHealthBadge;
+  // Availability flags
+  animalDataAvailable?: boolean;
+  ecosystemDataAvailable?: boolean;
+  adaptationDataAvailable?: boolean;
+  humanDataAvailable?: boolean;
+  // Human MVA cards
+  humanPopulation?: number | null;
+  maleHumans?: number | null;
+  femaleHumans?: number | null;
+  adultHumans?: number | null;
+  childrenHumans?: number | null;
+  latestHumanAction?: string | null;
+  latestHumanCausalEvent?: string | null;
+  averageHumanFear?: number | null;
+  averageHumanCuriosity?: number | null;
+  averageHumanRelationshipStability?: number | null;
+  humanSystemStatus?: "Active" | "Unavailable";
 };
 
 type PipelineEntry = {
@@ -512,13 +529,14 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
       name: true,
       status: true,
       currentTick: true,
+      seed: true,
       planet: {
         select: { id: true },
       },
     },
   });
 
-  const [latestTick, lastSuccessfulTick, biomeCellCount, plantCellCount, animalHealth] = await Promise.all([
+  const [latestTick, lastSuccessfulTick, biomeCellCount, plantCellCount, animalHealth, hasAnimalCols, hasEcoCols, hasAdaptCols] = await Promise.all([
     prisma.simulationTick.findFirst({
       where: { worldId },
       orderBy: { tick: "desc" },
@@ -565,7 +583,50 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
         averageReproductiveEfficiency: 0,
         averageClimateAdaptation: 0,
       }),
+    hasPersistedAnimalHealthColumns(),
+    hasPersistedEcosystemHealthColumns(),
+    hasPersistedPopulationAdaptationColumns(),
   ]);
+
+  // Derive Human MVA metrics from in-memory simulation snapshot
+  let humanPopulation: number | null = null;
+  let maleHumans: number | null = null;
+  let femaleHumans: number | null = null;
+  let adultHumans: number | null = null;
+  let childrenHumans: number | null = null;
+  let latestHumanAction: string | null = null;
+  let latestHumanCausalEvent: string | null = null;
+  let averageHumanFear: number | null = null;
+  let averageHumanCuriosity: number | null = null;
+  let averageHumanRelationshipStability: number | null = null;
+  let humanSystemStatus: "Active" | "Unavailable" = "Unavailable";
+
+  try {
+    const { getHumanMvaStateAtTick } = await import("./human-engine");
+    const tick = BigInt(world.currentTick ?? 0);
+    const humanResult = getHumanMvaStateAtTick({ id: world.id, seed: world.seed }, tick);
+    const agents = humanResult.state.agents;
+    humanPopulation = agents.length;
+    maleHumans = agents.filter((a) => a.sex === "male").length;
+    femaleHumans = agents.filter((a) => a.sex === "female").length;
+    adultHumans = agents.filter((a) => a.approxAgeYears >= 18).length;
+    childrenHumans = agents.filter((a) => a.approxAgeYears < 18).length;
+    latestHumanAction = agents.length > 0 ? agents.map((a) => `${a.sex}: ${a.lastDecision?.action ?? "-"}`).join(", ") : null;
+    const lastEvent = humanResult.state.causalEvents.at(-1);
+    latestHumanCausalEvent = lastEvent ? `${lastEvent.title}` : null;
+    averageHumanFear = agents.length ? agents.reduce((s, a) => s + a.emotions.fear, 0) / agents.length : null;
+    averageHumanCuriosity = agents.length ? agents.reduce((s, a) => s + a.emotions.curiosity, 0) / agents.length : null;
+    const relationships = humanResult.state.relationships;
+    if (relationships.length) {
+      const stabilityScores = relationships.map((r) => (r.trust + r.affection + r.companionship) / 3);
+      averageHumanRelationshipStability = stabilityScores.reduce((s, v) => s + v, 0) / stabilityScores.length;
+    } else {
+      averageHumanRelationshipStability = null;
+    }
+    humanSystemStatus = "Active";
+  } catch {
+    humanSystemStatus = "Unavailable";
+  }
 
   return buildWorldHealthSummary({
     world,
@@ -595,11 +656,88 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
     averageDiseaseResistance: animalHealth.averageDiseaseResistance,
     averageReproductiveEfficiency: animalHealth.averageReproductiveEfficiency,
     averageClimateAdaptation: animalHealth.averageClimateAdaptation,
-  });
+  }) as WorldHealthSummary & {
+    animalDataAvailable?: boolean;
+    ecosystemDataAvailable?: boolean;
+    adaptationDataAvailable?: boolean;
+    humanDataAvailable?: boolean;
+  };
+}
+
+// Augment the summary with availability flags and human metrics
+export async function getWorldHealthSummaryWithHumans(worldId: string): Promise<WorldHealthSummary> {
+  const base = await getWorldHealthSummary(worldId);
+
+  // We detect availability by checking if columns exist; reuse probes
+  const [hasAnimalCols, hasEcoCols, hasAdaptCols] = await Promise.all([
+    hasPersistedAnimalHealthColumns(),
+    hasPersistedEcosystemHealthColumns(),
+    hasPersistedPopulationAdaptationColumns(),
+  ]);
+
+  // Compute human metrics again here to attach (keeps buildWorldHealthSummary pure)
+  const world = await prisma.world.findUniqueOrThrow({ where: { id: worldId }, select: { id: true, seed: true, currentTick: true } });
+  let humanPopulation: number | null = null;
+  let maleHumans: number | null = null;
+  let femaleHumans: number | null = null;
+  let adultHumans: number | null = null;
+  let childrenHumans: number | null = null;
+  let latestHumanAction: string | null = null;
+  let latestHumanCausalEvent: string | null = null;
+  let averageHumanFear: number | null = null;
+  let averageHumanCuriosity: number | null = null;
+  let averageHumanRelationshipStability: number | null = null;
+  let humanSystemStatus: "Active" | "Unavailable" = "Unavailable";
+
+  try {
+    const { getHumanMvaStateAtTick } = await import("./human-engine");
+    const tick = BigInt(world.currentTick ?? 0);
+    const humanResult = getHumanMvaStateAtTick({ id: world.id, seed: world.seed }, tick);
+    const agents = humanResult.state.agents;
+    humanPopulation = agents.length;
+    maleHumans = agents.filter((a) => a.sex === "male").length;
+    femaleHumans = agents.filter((a) => a.sex === "female").length;
+    adultHumans = agents.filter((a) => a.approxAgeYears >= 18).length;
+    childrenHumans = agents.filter((a) => a.approxAgeYears < 18).length;
+    latestHumanAction = agents.length > 0 ? agents.map((a) => `${a.sex}: ${a.lastDecision?.action ?? "-"}`).join(", ") : null;
+    const lastEvent = humanResult.state.causalEvents.at(-1);
+    latestHumanCausalEvent = lastEvent ? `${lastEvent.title}` : null;
+    averageHumanFear = agents.length ? agents.reduce((s, a) => s + a.emotions.fear, 0) / agents.length : null;
+    averageHumanCuriosity = agents.length ? agents.reduce((s, a) => s + a.emotions.curiosity, 0) / agents.length : null;
+    const relationships = humanResult.state.relationships;
+    if (relationships.length) {
+      const stabilityScores = relationships.map((r) => (r.trust + r.affection + r.companionship) / 3);
+      averageHumanRelationshipStability = stabilityScores.reduce((s, v) => s + v, 0) / stabilityScores.length;
+    } else {
+      averageHumanRelationshipStability = null;
+    }
+    humanSystemStatus = "Active";
+  } catch {
+    humanSystemStatus = "Unavailable";
+  }
+
+  return {
+    ...base,
+    animalDataAvailable: hasAnimalCols,
+    ecosystemDataAvailable: hasEcoCols,
+    adaptationDataAvailable: hasAdaptCols,
+    humanDataAvailable: humanSystemStatus === "Active",
+    humanPopulation,
+    maleHumans,
+    femaleHumans,
+    adultHumans,
+    childrenHumans,
+    latestHumanAction,
+    latestHumanCausalEvent,
+    averageHumanFear,
+    averageHumanCuriosity,
+    averageHumanRelationshipStability,
+    humanSystemStatus,
+  };
 }
 
 export async function listWorldHealthSummaries(worldIds: readonly string[]): Promise<Map<string, WorldHealthSummary>> {
-  const entries = await Promise.all(worldIds.map(async (worldId) => [worldId, await getWorldHealthSummary(worldId)] as const));
+  const entries = await Promise.all(worldIds.map(async (worldId) => [worldId, await getWorldHealthSummaryWithHumans(worldId)] as const));
 
   return new Map(entries);
 }
