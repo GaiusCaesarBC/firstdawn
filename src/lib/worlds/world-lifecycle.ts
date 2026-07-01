@@ -80,6 +80,7 @@ export type ListWorldsInput = {
   environment?: WorldEnvironment;
   status?: WorldStatus;
   includeArchived?: boolean;
+  excludeTestWorlds?: boolean;
 };
 
 export type WorldWithPlanet = Prisma.WorldGetPayload<{
@@ -556,6 +557,7 @@ export async function listWorlds(
   return client.world.findMany({
     where: {
       environment: input.environment,
+      slug: input.excludeTestWorlds ? { not: { startsWith: "test-world-" } } : undefined,
       status: input.status ?? (input.includeArchived === false ? { not: WorldStatus.ARCHIVED } : undefined),
     },
     orderBy: [{ environment: "asc" }, { status: "asc" }, { name: "asc" }],

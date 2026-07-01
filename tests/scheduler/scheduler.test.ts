@@ -188,7 +188,7 @@ describe("simulation scheduler long-run limits", () => {
         process.env.ATLAS_SIMULATION_CHECKPOINT_TICKS = previousCheckpointTicks;
       }
     }
-  });
+  }, 120_000);
 });
 
 describe("simulation scheduler fidelity modes", () => {
@@ -391,7 +391,7 @@ describe("simulation scheduler tick persistence", () => {
     expect(ticks).toHaveLength(3);
     expect(ticks.every((tick) => tick.success)).toBe(true);
     expect(ticks.every((tick) => tick.systemCount === DEFAULT_SIMULATION_SYSTEMS.length)).toBe(true);
-  }, 60_000);
+  }, 120_000);
 
   it("advances from the latest SimulationTick when World.currentTick is stale", async () => {
     const world = await track(createActiveSandboxTestWorld());

@@ -1,10 +1,12 @@
+import { cache } from "react";
 import Link from "next/link";
 
 import {
-  buildAtlasSnapshot,
+  buildTimedAtlasSnapshot,
   normalizeAtlasSelectedDay,
   toAtlasWorldOption,
 } from "../../../lib/worlds/map-atlas";
+import { createHrTimer } from "../../../lib/utils/timing";
 import { listWorlds } from "../../../lib/worlds/world-lifecycle";
 import { WorldMapAtlasClient } from "./world-map-atlas-client";
 
@@ -16,6 +18,15 @@ type WorldsMapPageProps = {
   searchParams?: Promise<SearchParams>;
 };
 
+const loadAtlasWorlds = cache(async () => listWorlds({ includeArchived: true }));
+
+function wantsTestWorlds(params: SearchParams): boolean {
+  return readSearchParam(params, "includeTestWorlds") === "1" || readSearchParam(params, "includeArchived") === "1";
+}
+
+function isDefaultAtlasWorld(world: Awaited<ReturnType<typeof listWorlds>>[number]): boolean {
+  return world.status !== "ARCHIVED" && !world.slug.startsWith("test-world-");
+}
 function readSearchParam(params: SearchParams, key: string): string | null {
   const value = params[key];
 
@@ -36,9 +47,19 @@ function parseDay(value: string | null): number | null {
 }
 
 export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps) {
+  const timer = createHrTimer();
   const params = await searchParams ?? {};
-  const worlds = await listWorlds({ includeArchived: true });
-
+  const includeTestWorlds = wantsTestWorlds(params);
+  const allWorlds = await timer.time("db:worlds", loadAtlasWorlds);
+  const requestedWorld = readSearchParam(params, "world");
+  const selectedFromAllWorlds = requestedWorld
+    ? allWorlds.find((world) => world.id === requestedWorld || world.slug === requestedWorld) ?? null
+    : null;
+  const defaultWorlds = includeTestWorlds ? allWorlds : allWorlds.filter(isDefaultAtlasWorld);
+  const worlds = selectedFromAllWorlds && !defaultWorlds.some((world) => world.id === selectedFromAllWorlds.id)
+    ? [selectedFromAllWorlds, ...defaultWorlds]
+    : defaultWorlds;
+  timer.record("atlas:worlds:default-skipped", allWorlds.length - worlds.length);
   if (worlds.length === 0) {
     return (
       <main className="min-h-screen bg-[#060708] px-6 py-16 text-stone-100">
@@ -61,15 +82,17 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
     );
   }
 
-  const requestedWorld = readSearchParam(params, "world");
-  const selectedWorld = worlds.find((world) => world.id === requestedWorld || world.slug === requestedWorld) ?? worlds[0];
+  const selectedWorld = selectedFromAllWorlds ?? worlds[0];
   const selectedDay = normalizeAtlasSelectedDay(selectedWorld, parseDay(readSearchParam(params, "day")));
-  const snapshot = buildAtlasSnapshot(selectedWorld, selectedDay);
-
+  const timedSnapshot = await timer.time(`atlas:snapshot:selected:${selectedWorld.slug}`, async () =>
+    buildTimedAtlasSnapshot(selectedWorld, selectedDay),
+  );
+  timer.record(`atlas:snapshot:${timedSnapshot.timing.cacheHit ? "cache-hit" : "cache-miss"}`, timedSnapshot.timing.executionTimeMs);
+  timer.logDevBreakdown("/worlds/map timing");
   return (
     <WorldMapAtlasClient
       worlds={worlds.map(toAtlasWorldOption)}
-      initialSnapshot={snapshot}
+      initialSnapshot={timedSnapshot.value}
     />
   );
 }

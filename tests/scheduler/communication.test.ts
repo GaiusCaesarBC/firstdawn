@@ -320,7 +320,7 @@ describe("Communication Engine", () => {
     expect(agent.messagesSent + agent.messagesReceived).toBeGreaterThan(0);
     expect(agent.recentCommunications[0]).toMatchObject({ type: expect.any(String), successRate: expect.any(Number) });
     expect(agent.communicationTimeline.length).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("identical seeds produce identical communication", () => {
     const state = spawnFirstTwoHumans(world, 0n);

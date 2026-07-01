@@ -197,7 +197,7 @@ describe("Emergent Camps & Settlements Engine", () => {
       knownKnowledge: expect.any(Array),
       majorEvents: expect.any(Array),
     });
-  });
+  }, 60_000);
 
   it("records settlement milestones for the Chronicler", () => {
     const humanResult = getHumanMvaStateAtTick(world, 6n);

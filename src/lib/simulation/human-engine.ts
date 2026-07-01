@@ -46,6 +46,28 @@ type HumanWorldSource = {
   seed?: string | null;
 };
 
+type HumanMvaStateCacheStore = {
+  states: Map<string, HumanTickResult>;
+};
+
+const humanMvaStateCacheSymbol = Symbol.for("first-dawn.human-mva-state-cache");
+const humanMvaStateCacheStore =
+  (globalThis as unknown as Record<symbol, HumanMvaStateCacheStore | undefined>)[humanMvaStateCacheSymbol] ?? {
+    states: new Map<string, HumanTickResult>(),
+  };
+
+if (!(globalThis as unknown as Record<symbol, HumanMvaStateCacheStore | undefined>)[humanMvaStateCacheSymbol]) {
+  (globalThis as unknown as Record<symbol, HumanMvaStateCacheStore>)[humanMvaStateCacheSymbol] = humanMvaStateCacheStore;
+}
+
+function getHumanMvaStateCacheKey(world: HumanWorldSource, tick: bigint): string {
+  return JSON.stringify({
+    worldId: world.id,
+    seed: world.seed?.trim() || "first-dawn-human-mva",
+    tick: tick.toString(),
+  });
+}
+
 type MutableTickState = {
   agents: HumanAgent[];
   relationships: HumanRelationship[];
@@ -931,11 +953,18 @@ export function getHumanMvaStateAtTick(
   world: HumanWorldSource,
   tick: bigint,
 ): HumanTickResult {
+  const cacheKey = getHumanMvaStateCacheKey(world, tick);
+  const cached = humanMvaStateCacheStore.states.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
   const seed = world.seed?.trim() || "first-dawn-human-mva";
   const initialState = spawnFirstTwoHumans(world, 0n);
 
   if (tick <= 0n) {
-    return {
+    const result = {
       state: initialState,
       newEvents: [],
       memoryEvents: [],
@@ -944,6 +973,9 @@ export function getHumanMvaStateAtTick(
       communicationEvents: [],
       chroniclerReport: createChroniclerReport(initialState, []),
     };
+
+    humanMvaStateCacheStore.states.set(cacheKey, result);
+    return result;
   }
 
   let state = initialState;
@@ -962,9 +994,9 @@ export function getHumanMvaStateAtTick(
     state = result.state;
   }
 
+  humanMvaStateCacheStore.states.set(cacheKey, result);
   return result;
 }
-
 export function simulateHumanDay(
   initialState: HumanMvaState,
   seed: string,

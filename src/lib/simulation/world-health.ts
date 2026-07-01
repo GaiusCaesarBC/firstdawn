@@ -520,6 +520,159 @@ async function getPersistedAnimalHealth(planetId: string): Promise<{
   };
 }
 
+
+type LightweightHealthWorld = {
+  id: string;
+  name: string;
+  slug?: string | null;
+  status: WorldStatus | string;
+  currentTick: bigint | number | string;
+};
+
+type LightweightTick = {
+  tick: bigint;
+  success: boolean;
+  metadata: Prisma.JsonValue | null;
+  completedAt: Date;
+};
+
+type TimedPromiseCache<T> = {
+  expiresAt: number;
+  promise: Promise<T>;
+};
+
+const HEALTH_PROMISE_CACHE_TTL_MS = 5_000;
+const lightweightHealthCache = new Map<string, TimedPromiseCache<WorldHealthSummary>>();
+const fullHealthCache = new Map<string, TimedPromiseCache<WorldHealthSummary>>();
+
+function memoizeHealthPromise<T>(
+  cache: Map<string, TimedPromiseCache<T>>,
+  key: string,
+  compute: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const existing = cache.get(key);
+
+  if (existing && existing.expiresAt > now) {
+    return existing.promise;
+  }
+
+  const promise = compute().catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+  cache.set(key, { promise, expiresAt: now + HEALTH_PROMISE_CACHE_TTL_MS });
+  return promise;
+}
+
+export function isDefaultUiHealthWorld(world: { slug?: string | null; status?: string | null }): boolean {
+  return world.status !== "ARCHIVED" && !world.slug?.startsWith("test-world-");
+}
+
+function buildLightweightWorldHealthSummary(
+  world: LightweightHealthWorld,
+  latestTick: LightweightTick | null,
+): WorldHealthSummary {
+  const currentTick = toTickString(world.currentTick);
+  const latestSimulationTickNumber = latestTick ? toTickString(latestTick.tick) : null;
+  const lastTickStatus: LastTickStatus = latestTick
+    ? latestTick.success ? "success" : "failed"
+    : "missing";
+  const failedSystems = latestTick ? getFailedSystems(latestTick.metadata) : [];
+  const lastErrorMessage = latestTick ? getLastErrorMessage(latestTick.metadata) : null;
+  const weatherSnapshotAvailable = latestTick ? hasWeatherSnapshot(latestTick.metadata) : false;
+  const systemHealth = latestTick ? getSystemHealth(latestTick.metadata) : { status: null, diagnostics: [] };
+  const badge = deriveBadge({
+    currentTick,
+    latestTick: latestSimulationTickNumber,
+    lastTickStatus,
+    failedSystems,
+    lastErrorMessage,
+    biomeCoveragePercent: 100,
+    plantCoveragePercent: 100,
+    weatherSnapshotAvailable,
+    systemHealthStatus: systemHealth.status,
+  });
+
+  return {
+    worldId: world.id,
+    worldName: world.name,
+    status: world.status,
+    currentTick,
+    latestSimulationTickNumber,
+    lastTickStatus,
+    lastSuccessfulTickTime: latestTick?.success ? latestTick.completedAt.toISOString() : null,
+    failedSystems,
+    lastErrorMessage,
+    biomeCoveragePercent: 100,
+    plantCoveragePercent: 100,
+    animalSpeciesCount: 0,
+    occupiedAnimalHabitatPercent: 0,
+    totalWildlifePopulation: 0,
+    averageAnimalHabitatSuitability: 0,
+    averageAnimalHealth: 0,
+    averageEcosystemHealth: 0,
+    averageBiodiversity: 0,
+    migrationActivity: 0,
+    foodStability: 0,
+    predatorBalance: 0,
+    collapsedHabitats: 0,
+    populationGrowthRate: 0,
+    plantConsumptionRate: 0,
+    averageFitness: 0,
+    averageAdaptationDiversity: 0,
+    highestAdaptedPopulation: null,
+    lowestFitnessPopulation: null,
+    averageMigrationInstinct: 0,
+    averageDiseaseResistance: 0,
+    averageReproductiveEfficiency: 0,
+    averageClimateAdaptation: 0,
+    weatherSnapshotAvailable,
+    systemHealthStatus: systemHealth.status,
+    systemHealthDiagnostics: systemHealth.diagnostics,
+    badge,
+    animalDataAvailable: false,
+    ecosystemDataAvailable: false,
+    adaptationDataAvailable: false,
+    humanDataAvailable: false,
+    humanPopulation: null,
+    maleHumans: null,
+    femaleHumans: null,
+    adultHumans: null,
+    childrenHumans: null,
+    latestHumanAction: null,
+    latestHumanCausalEvent: null,
+    averageHumanFear: null,
+    averageHumanCuriosity: null,
+    averageHumanRelationshipStability: null,
+    humanSystemStatus: "Unavailable",
+  };
+}
+
+export async function getLightweightWorldHealthSummary(world: LightweightHealthWorld): Promise<WorldHealthSummary> {
+  const cacheKey = `${world.id}:${world.status}:${toTickString(world.currentTick)}`;
+
+  return memoizeHealthPromise(lightweightHealthCache, cacheKey, async () => {
+    const latestTick = await prisma.simulationTick.findFirst({
+      where: { worldId: world.id },
+      orderBy: { tick: "desc" },
+      select: { tick: true, success: true, metadata: true, completedAt: true },
+    });
+
+    return buildLightweightWorldHealthSummary(world, latestTick);
+  });
+}
+
+export async function listWorldHealthSummariesLightweight(
+  worlds: readonly LightweightHealthWorld[],
+): Promise<Map<string, WorldHealthSummary>> {
+  const eligibleWorlds = worlds.filter(isDefaultUiHealthWorld);
+  const entries = await Promise.all(
+    eligibleWorlds.map(async (world) => [world.id, await getLightweightWorldHealthSummary(world)] as const),
+  );
+
+  return new Map(entries);
+}
 export async function getWorldHealthSummary(worldId: string): Promise<WorldHealthSummary> {
   const expectedCellCount = getGridSummary(createGrid()).totalCells;
   const world = await prisma.world.findUniqueOrThrow({
@@ -536,7 +689,7 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
     },
   });
 
-  const [latestTick, lastSuccessfulTick, biomeCellCount, plantCellCount, animalHealth, hasAnimalCols, hasEcoCols, hasAdaptCols] = await Promise.all([
+  const [latestTick, lastSuccessfulTick, biomeCellCount, plantCellCount, animalHealth] = await Promise.all([
     prisma.simulationTick.findFirst({
       where: { worldId },
       orderBy: { tick: "desc" },
@@ -587,46 +740,6 @@ export async function getWorldHealthSummary(worldId: string): Promise<WorldHealt
     hasPersistedEcosystemHealthColumns(),
     hasPersistedPopulationAdaptationColumns(),
   ]);
-
-  // Derive Human MVA metrics from in-memory simulation snapshot
-  let humanPopulation: number | null = null;
-  let maleHumans: number | null = null;
-  let femaleHumans: number | null = null;
-  let adultHumans: number | null = null;
-  let childrenHumans: number | null = null;
-  let latestHumanAction: string | null = null;
-  let latestHumanCausalEvent: string | null = null;
-  let averageHumanFear: number | null = null;
-  let averageHumanCuriosity: number | null = null;
-  let averageHumanRelationshipStability: number | null = null;
-  let humanSystemStatus: "Active" | "Unavailable" = "Unavailable";
-
-  try {
-    const { getHumanMvaStateAtTick } = await import("./human-engine");
-    const tick = BigInt(world.currentTick ?? 0);
-    const humanResult = getHumanMvaStateAtTick({ id: world.id, seed: world.seed }, tick);
-    const agents = humanResult.state.agents;
-    humanPopulation = agents.length;
-    maleHumans = agents.filter((a) => a.sex === "male").length;
-    femaleHumans = agents.filter((a) => a.sex === "female").length;
-    adultHumans = agents.filter((a) => a.approxAgeYears >= 18).length;
-    childrenHumans = agents.filter((a) => a.approxAgeYears < 18).length;
-    latestHumanAction = agents.length > 0 ? agents.map((a) => `${a.sex}: ${a.lastDecision?.action ?? "-"}`).join(", ") : null;
-    const lastEvent = humanResult.state.causalEvents.at(-1);
-    latestHumanCausalEvent = lastEvent ? `${lastEvent.title}` : null;
-    averageHumanFear = agents.length ? agents.reduce((s, a) => s + a.emotions.fear, 0) / agents.length : null;
-    averageHumanCuriosity = agents.length ? agents.reduce((s, a) => s + a.emotions.curiosity, 0) / agents.length : null;
-    const relationships = humanResult.state.relationships;
-    if (relationships.length) {
-      const stabilityScores = relationships.map((r) => (r.trust + r.affection + r.companionship) / 3);
-      averageHumanRelationshipStability = stabilityScores.reduce((s, v) => s + v, 0) / stabilityScores.length;
-    } else {
-      averageHumanRelationshipStability = null;
-    }
-    humanSystemStatus = "Active";
-  } catch {
-    humanSystemStatus = "Unavailable";
-  }
 
   return buildWorldHealthSummary({
     world,
@@ -736,8 +849,11 @@ export async function getWorldHealthSummaryWithHumans(worldId: string): Promise<
   };
 }
 
+export async function getCachedWorldHealthSummaryWithHumans(worldId: string): Promise<WorldHealthSummary> {
+  return memoizeHealthPromise(fullHealthCache, worldId, () => getWorldHealthSummaryWithHumans(worldId));
+}
 export async function listWorldHealthSummaries(worldIds: readonly string[]): Promise<Map<string, WorldHealthSummary>> {
-  const entries = await Promise.all(worldIds.map(async (worldId) => [worldId, await getWorldHealthSummaryWithHumans(worldId)] as const));
+  const entries = await Promise.all(worldIds.map(async (worldId) => [worldId, await getCachedWorldHealthSummaryWithHumans(worldId)] as const));
 
   return new Map(entries);
 }

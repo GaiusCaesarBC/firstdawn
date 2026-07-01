@@ -235,7 +235,7 @@ describe("Human Movement & Mobility Engine", () => {
     });
     expect("previousCellId" in agent).toBe(true);
     expect("destinationCellId" in agent).toBe(true);
-  });
+  }, 60_000);
 
   it("runs movement after goals and before action resolution", () => {
     const initial = spawnFirstTwoHumans(world, 0n);

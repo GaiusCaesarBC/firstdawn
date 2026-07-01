@@ -1378,6 +1378,7 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
   });
   const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
+  const normalizeSettlementText = (value: string) => value.replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
   const residentsByCell = new Map<string, string[]>();
 
   for (const agent of currentHumanResult.state.agents) {
@@ -1457,12 +1458,12 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
     abandonedCount: settlements.filter((settlement) => settlement.status === "abandoned").length,
     firstSettlement: settlements[0] ?? null,
     recentEvents: result.events.slice(-8).map((event) => ({
-      id: event.id.replace(`${world.id}:`, ""),
+      id: normalizeSettlementText(event.id) ?? event.id,
       tick: event.tick,
       settlementId: event.settlementId.replace(`${world.id}:`, ""),
       kind: event.kind,
-      title: event.title,
-      summary: event.summary,
+      title: normalizeSettlementText(event.title),
+      summary: normalizeSettlementText(event.summary),
       importance: event.importance,
       cellId: event.cellId,
     })),
@@ -1500,6 +1501,17 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
     tick: dayEndTick,
     state: familyResult.state,
     settlements: settlementResult,
+  });
+  const normalizeStoredResource = (resource: HumanInventorySummary["personalInventory"][number]) => ({
+    ...resource,
+    id: normalizeHumanTextIds(resource.id),
+    producerHumanId: resource.producerHumanId ? displayId(resource.producerHumanId) : null,
+    settlementId: resource.settlementId ? normalizeHumanTextIds(resource.settlementId) : null,
+  });
+  const normalizeStorageHistory = (entry: HumanInventorySummary["recentDeposits"][number]) => ({
+    ...entry,
+    humanId: entry.humanId ? displayId(entry.humanId) : null,
+    summary: normalizeHumanTextIds(entry.summary),
   });
   const latestDayEvents = result.state.causalEvents.filter((event) => {
     const eventTick = BigInt(event.tick);
@@ -1731,11 +1743,11 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
         teachingHistory: topCommunicationSummaries(teachingCommunications, displayId, normalizeHumanTextIds, "recent", 6),
         warningHistory: topCommunicationSummaries(warningCommunications, displayId, normalizeHumanTextIds, "urgency", 6),
         communicationTimeline,
-        personalInventory: inventory?.personalInventory ?? [],
-        familyInventory: inventory?.familyInventory ?? [],
-        recentDeposits: inventory?.recentDeposits ?? [],
-        recentWithdrawals: inventory?.recentWithdrawals ?? [],
-        contributionHistory: inventory?.contributionHistory ?? [],
+        personalInventory: inventory?.personalInventory.map(normalizeStoredResource) ?? [],
+        familyInventory: inventory?.familyInventory.map(normalizeStoredResource) ?? [],
+        recentDeposits: inventory?.recentDeposits.map(normalizeStorageHistory) ?? [],
+        recentWithdrawals: inventory?.recentWithdrawals.map(normalizeStorageHistory) ?? [],
+        contributionHistory: inventory?.contributionHistory.map(normalizeStorageHistory) ?? [],
         latestCausalEvent: latestCausalEvent
           ? {
             tick: latestCausalEvent.tick,
@@ -1752,7 +1764,7 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
       id: normalizeHumanTextIds(event.id),
       tick: event.tick,
       type: event.type,
-      title: event.title,
+      title: normalizeHumanTextIds(event.title),
       summary: normalizeHumanTextIds(event.summary),
       agentIds: event.agentIds.map(displayId),
       cellId: event.cellId,
@@ -1784,6 +1796,8 @@ function buildAtlasFamilies(world: WorldWithPlanet, selectedDay: number): AtlasF
   const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, agent.id.includes(":first-human-") ? `first-human-${agent.sex}` : agent.id.replace(`${world.id}:`, "") ]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const normalizeEntityId = (sourceId: string | null) => sourceId ? sourceId.replace(`${world.id}:`, "") : null;
+  const normalizeEntityText = (value: string) => value.replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
+  const normalizeOptionalEntityText = (value: string | null | undefined) => value ? normalizeEntityText(value) : value;
 
   return {
     tick: result.tick,
@@ -1796,7 +1810,8 @@ function buildAtlasFamilies(world: WorldWithPlanet, selectedDay: number): AtlasF
       parentIds: family.parentIds.map(displayId),
       childIds: family.childIds.map(displayId),
       settlementId: normalizeEntityId(family.settlementId),
-      history: family.history.map((entry) => ({ ...entry, relatedHumanIds: entry.relatedHumanIds.map(displayId), settlementId: normalizeEntityId(entry.settlementId) })),
+      ancestryTags: family.ancestryTags.map(normalizeEntityText),
+      history: family.history.map((entry) => ({ ...entry, summary: normalizeEntityText(entry.summary ?? ""), relatedHumanIds: entry.relatedHumanIds.map(displayId), settlementId: normalizeEntityId(entry.settlementId) })),
     })),
     lineages: result.lineages.map((lineage) => ({
       ...lineage,
@@ -1809,7 +1824,10 @@ function buildAtlasFamilies(world: WorldWithPlanet, selectedDay: number): AtlasF
     })),
     events: result.events.map((event) => ({
       ...event,
-      id: event.id.replace(`${world.id}:`, ""),
+      id: normalizeEntityText(event.id) ?? event.id,
+      worldId: "atlas-world",
+      title: normalizeEntityText(event.title) ?? event.title,
+      summary: normalizeOptionalEntityText(event.summary) ?? event.summary,
       familyId: normalizeEntityId(event.familyId),
       lineageId: normalizeEntityId(event.lineageId),
       settlementId: normalizeEntityId(event.settlementId),

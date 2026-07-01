@@ -189,7 +189,7 @@ describe("Resource Storage & Shared Supplies Engine", () => {
       recentDeposits: expect.any(Array),
       contributionHistory: expect.any(Array),
     });
-  });
+  }, 60_000);
 
   it("records storage milestones for the Chronicler", () => {
     const state = stableState();

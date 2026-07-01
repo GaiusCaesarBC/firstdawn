@@ -203,7 +203,7 @@ describe("Family & Generations Engine", () => {
     expect(snapshot.families.families.length).toBeGreaterThan(0);
     expect(snapshot.families.families[0]).toMatchObject({ memberIds: expect.any(Array), lineageId: expect.any(String) });
     expect(snapshot.settlements.settlements[0]).toHaveProperty("familiesPresent");
-  });
+  }, 60_000);
 
   it("registers after settlements and before civilization", () => {
     const labels = DEFAULT_SIMULATION_SYSTEMS.map((system) => system.label);

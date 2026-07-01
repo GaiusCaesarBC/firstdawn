@@ -1106,6 +1106,38 @@ export function resumeWorldSimulation(worldId: string): Promise<SimulationState>
   return SimulationScheduler.resumeWorldSimulation(worldId);
 }
 
+type SimulationStatePromiseCacheEntry = {
+  expiresAt: number;
+  promise: Promise<SimulationState>;
+};
+
+const simulationStatePromiseCacheSymbol = Symbol.for("first-dawn.scheduler-state-promise-cache");
+const simulationStatePromiseCache =
+  (globalThis as unknown as Record<symbol, Map<string, SimulationStatePromiseCacheEntry> | undefined>)[simulationStatePromiseCacheSymbol] ??
+  new Map<string, SimulationStatePromiseCacheEntry>();
+
+if (!(globalThis as unknown as Record<symbol, Map<string, SimulationStatePromiseCacheEntry> | undefined>)[simulationStatePromiseCacheSymbol]) {
+  (globalThis as unknown as Record<symbol, Map<string, SimulationStatePromiseCacheEntry>>)[simulationStatePromiseCacheSymbol] = simulationStatePromiseCache;
+}
+
+const SIMULATION_STATE_PROMISE_TTL_MS = 2_000;
+
 export function getSimulationState(worldId: string): Promise<SimulationState> {
-  return SimulationScheduler.getSimulationState(worldId);
+  const now = Date.now();
+  const existing = simulationStatePromiseCache.get(worldId);
+
+  if (existing && existing.expiresAt > now) {
+    return existing.promise;
+  }
+
+  const promise = SimulationScheduler.getSimulationState(worldId).catch((error) => {
+    simulationStatePromiseCache.delete(worldId);
+    throw error;
+  });
+  simulationStatePromiseCache.set(worldId, {
+    promise,
+    expiresAt: now + SIMULATION_STATE_PROMISE_TTL_MS,
+  });
+
+  return promise;
 }

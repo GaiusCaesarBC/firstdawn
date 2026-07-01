@@ -1,9 +1,9 @@
+import { cache } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { WorldsDashboardClient } from "./worlds-dashboard.client";
 import { createHrTimer } from "../../lib/utils/timing";
 import { getCachedDeterministic } from "../../lib/simulation/deterministic-cache";
-import { resolveSimulationSnapshots } from "../../lib/simulation/simulation-snapshot-cache";
 import { getConfiguredMaxSimulationYears } from "../../lib/simulation/simulation-limits";
 
 import {
@@ -20,7 +20,9 @@ import { getPlanetResourcesState, type PlanetResourceSummary } from "../../lib/s
 import { getTerrainState, type TerrainSummary } from "../../lib/simulation/terrain-engine";
 import { getWeatherState, type WeatherSummary } from "../../lib/simulation/weather-engine";
 import {
-  listWorldHealthSummaries,
+  getCachedWorldHealthSummaryWithHumans,
+  isDefaultUiHealthWorld,
+  listWorldHealthSummariesLightweight,
   type WorldHealthBadge,
   type WorldHealthSummary,
 } from "../../lib/simulation/world-health";
@@ -51,6 +53,28 @@ type WorldRow = Awaited<ReturnType<typeof listWorlds>>[number];
 type ActionLogRow = Awaited<ReturnType<typeof listWorldActionLogs>>[number];
 type TickHistoryRow = Awaited<ReturnType<typeof listRecentSimulationTicks>>[number];
 
+const loadWorldsPageData = cache(async () => Promise.all([
+  listWorlds({ includeArchived: false }),
+  listWorldActionLogs(12),
+  listRecentSimulationTicks(12),
+]));
+
+const getCachedSelectedSimulationState = cache((worldId: string) => getSimulationState(worldId));
+const getCachedSelectedHealthSummary = cache((worldId: string) => getCachedWorldHealthSummaryWithHumans(worldId));
+
+function chooseDefaultActiveWorld(worlds: WorldRow[]): WorldRow | null {
+  const defaultWorlds = worlds.filter(isDefaultUiHealthWorld);
+
+  return (
+    defaultWorlds.find((world) => world.environment === "SANDBOX" && world.status === "ACTIVE") ??
+    defaultWorlds.find((world) => world.status === "ACTIVE") ??
+    worlds.find((world) => world.environment === "SANDBOX" && world.status === "ACTIVE") ??
+    worlds.find((world) => world.status === "ACTIVE") ??
+    defaultWorlds[0] ??
+    worlds[0] ??
+    null
+  );
+}
 type WorldsPageProps = {
   searchParams?: Promise<SearchParams>;
 };
@@ -997,50 +1021,39 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
   let loadError: string | null = null;
 
   try {
-    [worlds, actionLogs, tickHistory] = await timer.time("db:load", async () =>
-      Promise.all([
-        listWorlds(),
-        listWorldActionLogs(12),
-        listRecentSimulationTicks(12),
-      ]),
-    );
+    [worlds, actionLogs, tickHistory] = await timer.time("db:load", loadWorldsPageData);
 
     if (worlds.length > 0) {
       grid = await timer.time("grid", async () => createGrid());
     }
 
-    simulationStates = await timer.time("states:simulation", async () => {
-      if (!grid) {
-        return new Map<string, SimulationState>();
-      }
+    const selectedWorld = chooseDefaultActiveWorld(worlds);
 
-      const snapshots = await resolveSimulationSnapshots(worlds, {
-        grid,
-        computeSnapshot: (world) => timer.time(
-          `simulation snapshot compute:${world.slug}`,
-          () => getSimulationState(world.id),
-        ),
-        onEvent: (event) => {
-          const fingerprint = event.fingerprint?.shortHash ?? "noncanonical";
-          timer.record(`simulation snapshot ${event.action}:${event.world.slug}:${fingerprint}`);
-        },
-      });
-
-      return snapshots.states;
-    });
-
-    healthSummaries = await timer.time("states:health", async () =>
-      listWorldHealthSummaries(worlds.map((world) => world.id)),
+    healthSummaries = await timer.time("states:health:lightweight", async () =>
+      listWorldHealthSummariesLightweight(worlds),
     );
+    timer.record("states:health:default-skipped", worlds.filter((world) => !isDefaultUiHealthWorld(world)).length);
+
+    if (selectedWorld) {
+      timer.record("states:simulation:default-skipped", Math.max(0, worlds.length - 1));
+
+      const [selectedState, selectedHealth] = await Promise.all([
+        timer.time(`states:simulation:selected:${selectedWorld.slug}`, async () =>
+          getCachedSelectedSimulationState(selectedWorld.id),
+        ),
+        timer.time(`states:health:selected:${selectedWorld.slug}`, async () =>
+          getCachedSelectedHealthSummary(selectedWorld.id),
+        ),
+      ]);
+
+      simulationStates.set(selectedWorld.id, selectedState);
+      healthSummaries.set(selectedWorld.id, selectedHealth);
+    }
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Unable to load worlds.";
   }
 
-  const activeSandboxWorld =
-    worlds.find((world) => world.environment === "SANDBOX" && world.status === "ACTIVE") ??
-    worlds.find((world) => world.status === "ACTIVE") ??
-    worlds[0] ??
-    null;
+  const activeSandboxWorld = chooseDefaultActiveWorld(worlds);
 
   // Compute deterministic layers for the active sandbox world with caching (canonical only)
   let precomputedTerrain: ReturnType<typeof getTerrainState> | null = null;
@@ -1298,10 +1311,3 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
     </main>
   );
 }
-
-
-
-
-
-
-
