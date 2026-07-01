@@ -16,7 +16,9 @@ import { computeMotivations, initialCuriosityProfile, updateCuriosityProfile } f
 import {
   FIRST_HUMAN_AGE_YEARS,
   FIRST_HUMAN_START_CELL_ID,
+  HUMAN_ADULT_AGE_YEARS,
   HUMAN_MVA_DAY_TICKS,
+  type HumanAgeStage,
   type HumanAgent,
   type HumanBeliefDictionary,
   type HumanCausalEvent,
@@ -68,6 +70,26 @@ function pressureAbove(value: number, threshold: number): number {
   }
 
   return clamp01((value - threshold) / (1 - threshold));
+}
+
+function ageStageForYears(years: number): HumanAgeStage {
+  if (years < 2) {
+    return "Infant";
+  }
+
+  if (years < 12) {
+    return "Child";
+  }
+
+  if (years < HUMAN_ADULT_AGE_YEARS) {
+    return "Adolescent";
+  }
+
+  if (years >= 60) {
+    return "Elder";
+  }
+
+  return "Adult";
 }
 
 function createPersonality(seed: string, tick: bigint, label: string): HumanPersonality {
@@ -163,6 +185,20 @@ function createHumanAgent(
     motherId: null,
     fatherId: null,
     generation: 0,
+    biologicalParentIds: [],
+    guardianIds: [],
+    childIds: [],
+    siblingIds: [],
+    mateId: null,
+    familyId: `${worldId}:family:first-humans`,
+    lineageId: `${worldId}:lineage:first-humans`,
+    ageStage: ageStageForYears(round(ageDays / 365)),
+    birthplaceCellId: cellId,
+    birthplaceSettlementId: null,
+    inheritedHomeCellId: cellId,
+    inheritedSettlementId: null,
+    ancestryTags: ["founding-generation", `birthplace:${cellId}`],
+    familyHistory: [{ tick: tick.toString(), type: "Lineage Established", summary: "A founding adult began a traceable lineage.", relatedHumanIds: [], settlementId: null }],
     needs: initialNeeds(),
     emotions: initialEmotions(),
     curiosityProfile: initialCuriosityProfile(0.5, seed),
@@ -730,6 +766,9 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
     agents: state.agents.map((agent) => ({
       ...agent,
       needs: updateNeeds(agent.needs),
+      ageDays: Math.max(0, agent.ageDays + 1),
+      approxAgeYears: round(Math.max(0, agent.ageDays + 1) / 365),
+      ageStage: ageStageForYears(round(Math.max(0, agent.ageDays + 1) / 365)),
     })),
     relationships: state.relationships.map((relationship) => ({ ...relationship })),
     events: [],

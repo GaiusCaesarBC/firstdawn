@@ -5,7 +5,6 @@ import {
   normalizeAtlasSelectedDay,
   toAtlasWorldOption,
 } from "../../../lib/worlds/map-atlas";
-import { getWorldHealthSummaryWithHumans } from "../../../lib/simulation/world-health";
 import { listWorlds } from "../../../lib/worlds/world-lifecycle";
 import { WorldMapAtlasClient } from "./world-map-atlas-client";
 
@@ -66,13 +65,11 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
   const selectedWorld = worlds.find((world) => world.id === requestedWorld || world.slug === requestedWorld) ?? worlds[0];
   const selectedDay = normalizeAtlasSelectedDay(selectedWorld, parseDay(readSearchParam(params, "day")));
   const snapshot = buildAtlasSnapshot(selectedWorld, selectedDay);
-  const health = await getWorldHealthSummaryWithHumans(selectedWorld.id);
 
   return (
     <WorldMapAtlasClient
       worlds={worlds.map(toAtlasWorldOption)}
       initialSnapshot={snapshot}
-      initialHealth={health}
     />
   );
 }

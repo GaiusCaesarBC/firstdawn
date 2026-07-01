@@ -474,6 +474,8 @@ describe("simulation scheduler system order", () => {
     "Knowledge & Learning Engine",
     "Communication Engine",
     "Emergent Camps & Settlements Engine",
+    "Family & Generations Engine",
+    "Resource Storage & Shared Supplies Engine",
     "Civilization",
     "Economy",
     "Culture",

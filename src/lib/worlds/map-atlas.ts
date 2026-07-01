@@ -1,6 +1,8 @@
 import type { AnimalGridCell } from "../simulation/animal-engine";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
 import { getSettlementStateAtTick, type Settlement } from "../simulation/settlement-engine";
+import { getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
+import { getResourceStorageStateFromHumanState, type HumanInventorySummary, type SettlementResourceSummary, type SettlementStorage } from "../simulation/resource-storage-engine";
 import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship } from "../simulation/human-types";
 import { HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
 import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
@@ -303,6 +305,11 @@ export type AtlasHumanAgent = {
   teachingHistory: AtlasHumanCommunicationSummary[];
   warningHistory: AtlasHumanCommunicationSummary[];
   communicationTimeline: AtlasHumanCommunicationSummary[];
+  personalInventory: HumanInventorySummary["personalInventory"];
+  familyInventory: HumanInventorySummary["familyInventory"];
+  recentDeposits: HumanInventorySummary["recentDeposits"];
+  recentWithdrawals: HumanInventorySummary["recentWithdrawals"];
+  contributionHistory: HumanInventorySummary["contributionHistory"];
   latestCausalEvent: {
     tick: string;
     type: string;
@@ -423,6 +430,19 @@ export type AtlasSettlementSummary = {
   currentResidents: string[];
   structures: string[];
   storedResources: Settlement["storedResources"];
+  storage: SettlementStorage | null;
+  resourceSummary: SettlementResourceSummary | null;
+  foodSupply: number;
+  waterSupply: number;
+  firewood: number;
+  constructionMaterials: number;
+  storageCapacity: number;
+  storageCapacityUsed: number;
+  spoilage: number;
+  dailyConsumption: number;
+  largestContributors: SettlementResourceSummary["largestContributors"];
+  mostNeededResources: string[];
+  resourceTrends: SettlementResourceSummary["resourceTrends"];
   culturalTraits: string[];
   knownKnowledge: Settlement["knowledgeSummary"];
   relationships: Settlement["relationshipGraph"];
@@ -433,6 +453,11 @@ export type AtlasSettlementSummary = {
   nearbyResources: string[];
   seasonalStatus: string;
   discoveryHistory: Settlement["discoveryHistory"];
+  familiesPresent: string[];
+  largestLineage: string | null;
+  children: number;
+  elders: number;
+  foundingFamilies: string[];
   tags: string[];
 };
 
@@ -458,6 +483,42 @@ export type AtlasSettlements = {
     permanence: number;
     population: number;
     reasons: Record<string, number>;
+  }>;
+};
+export type AtlasFamilyTree = {
+  tick: string;
+  families: Array<{
+    id: string;
+    lineageId: string;
+    memberIds: string[];
+    livingMemberIds: string[];
+    parentIds: string[];
+    childIds: string[];
+    homeCellId: string;
+    settlementId: string | null;
+    ancestryTags: string[];
+    history: FamilyGenerationsResult["families"][number]["history"];
+  }>;
+  lineages: Array<Omit<FamilyGenerationsResult["lineages"][number], "id" | "founderIds" | "livingDescendantIds" | "knownAncestorIds" | "familyIds" | "settlementIds"> & {
+    id: string;
+    founderIds: string[];
+    livingDescendantIds: string[];
+    knownAncestorIds: string[];
+    familyIds: string[];
+    settlementIds: string[];
+  }>;
+  events: Array<Omit<FamilyGenerationsResult["events"][number], "id" | "familyId" | "lineageId" | "settlementId" | "humanIds"> & {
+    id: string;
+    familyId: string | null;
+    lineageId: string | null;
+    settlementId: string | null;
+    humanIds: string[];
+  }>;
+  settlementSummaries: Array<Omit<FamilyGenerationsResult["settlementSummaries"][number], "settlementId" | "familiesPresent" | "largestLineageId" | "foundingFamilies"> & {
+    settlementId: string;
+    familiesPresent: string[];
+    largestLineageId: string | null;
+    foundingFamilies: string[];
   }>;
 };
 export type AtlasHumanMva = {
@@ -537,6 +598,7 @@ export type AtlasSnapshot = {
   statistics: AtlasStatistics;
   humans: AtlasHumanMva;
   settlements: AtlasSettlements;
+  families: AtlasFamilyTree;
   fingerprint: Pick<WorldFingerprint, "seed" | "hash" | "shortHash" | "canonical">;
   integrity: {
     canonical: boolean;
@@ -1301,6 +1363,19 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
     humanResult: currentHumanResult,
     previousHumanResult,
   });
+  const familyResult = getFamilyGenerationsStateFromHumanState({
+    worldId: world.id,
+    tick: dayEndTick,
+    state: currentHumanResult.state,
+    previousState: previousHumanResult?.state ?? null,
+    settlements: result,
+  });
+  const storageResult = getResourceStorageStateFromHumanState({
+    worldId: world.id,
+    tick: dayEndTick,
+    state: familyResult.state,
+    settlements: result,
+  });
   const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const residentsByCell = new Map<string, string[]>();
@@ -1313,6 +1388,10 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
   }
 
   const settlements = result.settlements.map((settlement) => {
+    const familySummary = familyResult.settlementSummaries.find((summary) => summary.settlementId === settlement.id);
+    const storage = storageResult.storages.find((entry) => entry.settlementId === settlement.id) ?? null;
+    const resourceSummary = storageResult.settlementSummaries.find((summary) => summary.settlementId === settlement.id) ?? null;
+
     const majorEvents = settlement.history.filter((entry) => entry.importance >= 0.5 || entry.type.includes("Camp") || entry.type.includes("Fire") || entry.type.includes("Food"));
     const resources = Object.entries(settlement.storedResources)
       .filter(([, value]) => value > 0)
@@ -1335,6 +1414,19 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
       currentResidents: residentsByCell.get(settlement.homeCellId) ?? [],
       structures: settlement.structures,
       storedResources: settlement.storedResources,
+      storage,
+      resourceSummary,
+      foodSupply: resourceSummary?.foodSupply ?? 0,
+      waterSupply: resourceSummary?.waterSupply ?? 0,
+      firewood: resourceSummary?.firewood ?? 0,
+      constructionMaterials: resourceSummary?.constructionMaterials ?? 0,
+      storageCapacity: resourceSummary?.capacity ?? storage?.capacity ?? 0,
+      storageCapacityUsed: resourceSummary?.capacityUsed ?? 0,
+      spoilage: resourceSummary?.spoilage ?? 0,
+      dailyConsumption: resourceSummary?.dailyConsumption ?? 0,
+      largestContributors: resourceSummary?.largestContributors.map((entry) => ({ ...entry, humanId: displayId(entry.humanId) })) ?? [],
+      mostNeededResources: resourceSummary?.mostNeededResources ?? [],
+      resourceTrends: resourceSummary?.resourceTrends ?? [],
       culturalTraits: settlement.culturalTraits,
       knownKnowledge: settlement.knowledgeSummary,
       relationships: settlement.relationshipGraph.map((edge) => ({
@@ -1349,6 +1441,11 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
       nearbyResources: resources,
       seasonalStatus: settlement.status === "seasonal" ? "Revisited seasonally" : settlement.status === "permanent" ? "Permanent" : titleize(settlement.status),
       discoveryHistory: settlement.discoveryHistory.map((entry) => ({ ...entry, humanId: displayId(entry.humanId) })),
+      familiesPresent: familySummary?.familiesPresent.map((id) => id.replace(`${world.id}:`, "")) ?? [],
+      largestLineage: familySummary?.largestLineageId ? familySummary.largestLineageId.replace(`${world.id}:`, "") : null,
+      children: familySummary?.children ?? 0,
+      elders: familySummary?.elders ?? 0,
+      foundingFamilies: familySummary?.foundingFamilies.map((id) => id.replace(`${world.id}:`, "")) ?? [],
       tags: settlement.tags,
     } satisfies AtlasSettlementSummary;
   });
@@ -1384,6 +1481,26 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
     (text, agent) => text.split(agent.id).join(displayId(agent.id)),
     value,
   ).replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
+  const previousHumanResult = dayEndTick > 0n ? getHumanMvaStateAtTick(world, dayEndTick - 1n) : null;
+  const settlementResult = getSettlementStateAtTick({
+    world,
+    tick: dayEndTick,
+    humanResult: result,
+    previousHumanResult,
+  });
+  const familyResult = getFamilyGenerationsStateFromHumanState({
+    worldId: world.id,
+    tick: dayEndTick,
+    state: result.state,
+    previousState: previousHumanResult?.state ?? null,
+    settlements: settlementResult,
+  });
+  const storageResult = getResourceStorageStateFromHumanState({
+    worldId: world.id,
+    tick: dayEndTick,
+    state: familyResult.state,
+    settlements: settlementResult,
+  });
   const latestDayEvents = result.state.causalEvents.filter((event) => {
     const eventTick = BigInt(event.tick);
 
@@ -1475,6 +1592,7 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
         }))),
         ...recentRelationshipChanges,
       ].sort((left, right) => Number(BigInt(right.tick) - BigInt(left.tick)) || left.type.localeCompare(right.type)).slice(0, 10);
+      const inventory = storageResult.humanInventories.find((entry) => entry.humanId === agent.id);
       const emotionReasons = buildHumanEmotionReasons(
         dayStartAgentById.get(agent.id) ?? agent,
         agent,
@@ -1613,6 +1731,11 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
         teachingHistory: topCommunicationSummaries(teachingCommunications, displayId, normalizeHumanTextIds, "recent", 6),
         warningHistory: topCommunicationSummaries(warningCommunications, displayId, normalizeHumanTextIds, "urgency", 6),
         communicationTimeline,
+        personalInventory: inventory?.personalInventory ?? [],
+        familyInventory: inventory?.familyInventory ?? [],
+        recentDeposits: inventory?.recentDeposits ?? [],
+        recentWithdrawals: inventory?.recentWithdrawals ?? [],
+        contributionHistory: inventory?.contributionHistory ?? [],
         latestCausalEvent: latestCausalEvent
           ? {
             tick: latestCausalEvent.tick,
@@ -1646,6 +1769,61 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
   };
 }
 
+function buildAtlasFamilies(world: WorldWithPlanet, selectedDay: number): AtlasFamilyTree {
+  const tick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
+  const humanResult = getHumanMvaStateAtTick(world, tick);
+  const previousHumanResult = tick > 0n ? getHumanMvaStateAtTick(world, tick - 1n) : null;
+  const settlementResult = getSettlementStateAtTick({ world, tick, humanResult, previousHumanResult });
+  const result = getFamilyGenerationsStateFromHumanState({
+    worldId: world.id,
+    tick,
+    state: humanResult.state,
+    previousState: previousHumanResult?.state ?? null,
+    settlements: settlementResult,
+  });
+  const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, agent.id.includes(":first-human-") ? `first-human-${agent.sex}` : agent.id.replace(`${world.id}:`, "") ]));
+  const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
+  const normalizeEntityId = (sourceId: string | null) => sourceId ? sourceId.replace(`${world.id}:`, "") : null;
+
+  return {
+    tick: result.tick,
+    families: result.families.map((family) => ({
+      ...family,
+      id: family.id.replace(`${world.id}:`, ""),
+      lineageId: family.lineageId.replace(`${world.id}:`, ""),
+      memberIds: family.memberIds.map(displayId),
+      livingMemberIds: family.livingMemberIds.map(displayId),
+      parentIds: family.parentIds.map(displayId),
+      childIds: family.childIds.map(displayId),
+      settlementId: normalizeEntityId(family.settlementId),
+      history: family.history.map((entry) => ({ ...entry, relatedHumanIds: entry.relatedHumanIds.map(displayId), settlementId: normalizeEntityId(entry.settlementId) })),
+    })),
+    lineages: result.lineages.map((lineage) => ({
+      ...lineage,
+      id: lineage.id.replace(`${world.id}:`, ""),
+      founderIds: lineage.founderIds.map(displayId),
+      livingDescendantIds: lineage.livingDescendantIds.map(displayId),
+      knownAncestorIds: lineage.knownAncestorIds.map(displayId),
+      familyIds: lineage.familyIds.map((id) => id.replace(`${world.id}:`, "")),
+      settlementIds: lineage.settlementIds.map((id) => id.replace(`${world.id}:`, "")),
+    })),
+    events: result.events.map((event) => ({
+      ...event,
+      id: event.id.replace(`${world.id}:`, ""),
+      familyId: normalizeEntityId(event.familyId),
+      lineageId: normalizeEntityId(event.lineageId),
+      settlementId: normalizeEntityId(event.settlementId),
+      humanIds: event.humanIds.map(displayId),
+    })),
+    settlementSummaries: result.settlementSummaries.map((summary) => ({
+      ...summary,
+      settlementId: summary.settlementId.replace(`${world.id}:`, ""),
+      familiesPresent: summary.familiesPresent.map((id) => id.replace(`${world.id}:`, "")),
+      largestLineageId: normalizeEntityId(summary.largestLineageId),
+      foundingFamilies: summary.foundingFamilies.map((id) => id.replace(`${world.id}:`, "")),
+    })),
+  };
+}
 export function toAtlasWorldOption(world: WorldWithPlanet): AtlasWorldOption {
   return {
     id: world.id,
@@ -1724,6 +1902,7 @@ function buildAtlasSnapshotUncached(
     ),
     humans: buildAtlasHumans(world, normalizedDay),
     settlements: buildAtlasSettlements(world, normalizedDay),
+    families: buildAtlasFamilies(world, normalizedDay),
     fingerprint: {
       seed: fingerprint.seed,
       hash: fingerprint.hash,

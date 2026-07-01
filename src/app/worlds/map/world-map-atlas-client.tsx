@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import {
+  useDeferredValue,
   useEffect,
-  useMemo,
   useEffectEvent,
   useRef,
   useState,
@@ -11,15 +11,6 @@ import {
 } from "react";
 
 import type { AtlasCell, AtlasSnapshot, AtlasWorldOption } from "../../../lib/worlds/map-atlas";
-import { renderAtlasBaseLayer, type AtlasVisualMode } from "../../../lib/simulation/atlas-rendering";
-import { pickAtlasGlobeCell, renderAtlasGlobe } from "../../../lib/simulation/atlas-globe-rendering";
-import {
-  prepareAtlasTextureDescriptor,
-  renderAtlasBeautyEffects,
-  type AtlasBeautyQuality,
-  type AtlasTextureDescriptor,
-} from "../../../lib/simulation/atlas-visual-effects";
-import type { WorldHealthBadge, WorldHealthSummary } from "../../../lib/simulation/world-health";
 
 type LayerId =
   | "planet"
@@ -49,30 +40,9 @@ type LayerId =
   | "fogPotential"
   | "dryness"
   | "weatherType"
-  | "resourceRichness"
-  | "metals"
-  | "industrial"
-  | "waterResources"
-  | "buildingMaterials"
-  | "rareMaterials"
   | "biomes"
   | "vegetation"
   | "animals"
-  | "ecosystemMigration"
-  | "foodAvailability"
-  | "predationPressure"
-  | "ecosystemHealth"
-  | "carryingCapacity"
-  | "plantConsumption"
-  | "adaptationFitness"
-  | "adaptationCold"
-  | "adaptationHeat"
-  | "adaptationDrought"
-  | "adaptationDisease"
-  | "adaptationMigration"
-  | "adaptationForaging"
-  | "adaptationPredator"
-  | "settlements"
   | "civilizations";
 
 type OverlayId =
@@ -84,7 +54,6 @@ type OverlayId =
   | "cellIds"
   | "neighborLinks"
   | "drainageArrows"
-  | "animalMovementVectors"
   | "pressureBands"
   | "mountainOutlines";
 
@@ -112,8 +81,6 @@ type AtlasView = {
   offsetY: number;
 };
 
-type AtlasViewMode = "developerAtlas" | "globePreview";
-
 type ScreenPoint = {
   x: number;
   y: number;
@@ -133,9 +100,7 @@ type HoverState = {
 type WorldMapAtlasClientProps = {
   worlds: AtlasWorldOption[];
   initialSnapshot: AtlasSnapshot;
-  initialHealth?: WorldHealthSummary | null;
   fetchSnapshot?: (worldId: string, day: number) => Promise<AtlasSnapshot>;
-  fetchHealth?: (worldId: string) => Promise<WorldHealthSummary>;
 };
 
 const MAP_CELL_SIZE = 28;
@@ -143,24 +108,6 @@ const MAP_PADDING = 24;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 10;
 const DEFAULT_CELL_FOCUS_SCALE = 1.4;
-const SELECTED_CELL_STORAGE_KEY = "first-dawn.atlas.selected-cell";
-const TIMELINE_COMMIT_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Enter", "Home", "PageDown", "PageUp"]);
-const VISUAL_MODE_OPTIONS: Array<{ id: AtlasVisualMode; label: string; description: string }> = [
-  { id: "hybrid", label: "Hybrid", description: "Smooth visual planet with subtle cell inspection." },
-  { id: "smoothAtlas", label: "Smooth Atlas", description: "Organic render from logical cell data." },
-  { id: "scientificOverlay", label: "Scientific Overlay", description: "Analytical layer clarity for exact comparisons." },
-  { id: "simulationGrid", label: "Simulation Grid", description: "Raw logical grid debug view." },
-];
-const VIEW_MODE_OPTIONS: Array<{ id: AtlasViewMode; label: string; description: string }> = [
-  { id: "developerAtlas", label: "2D Developer Atlas", description: "Primary cell inspection and debugging surface." },
-  { id: "globePreview", label: "Globe Mode", description: "Rotating visual globe using the same atlas texture source." },
-];
-const BEAUTY_QUALITY_OPTIONS: Array<{ id: AtlasBeautyQuality; label: string }> = [
-  { id: "off", label: "Off" },
-  { id: "balanced", label: "Balanced" },
-  { id: "high", label: "High" },
-  { id: "ultra", label: "Ultra" },
-];
 const OVERLAY_TOGGLE_LABELS: Record<OverlayId, string> = {
   latitudeBands: "Latitude bands",
   windArrows: "Wind arrows",
@@ -170,7 +117,6 @@ const OVERLAY_TOGGLE_LABELS: Record<OverlayId, string> = {
   cellIds: "Cell IDs",
   neighborLinks: "Neighbor links",
   drainageArrows: "Drainage arrows",
-  animalMovementVectors: "Animal movement",
   pressureBands: "Pressure bands",
   mountainOutlines: "Mountain outlines",
 };
@@ -203,31 +149,10 @@ const LAYERS: LayerDefinition[] = [
   { id: "fogPotential", label: "Fog Potential", group: "Weather", description: "Fog potential field." },
   { id: "dryness", label: "Dryness", group: "Weather", description: "Dryness index heatmap." },
   { id: "weatherType", label: "Weather Type", group: "Weather", description: "Explicit weather class map." },
-  { id: "resourceRichness", label: "Resource Richness", group: "Resources", description: "Composite natural resource potential." },
-  { id: "metals", label: "Metals", group: "Resources", description: "Iron, copper, gold, silver, tin, and nickel potential." },
-  { id: "industrial", label: "Industrial", group: "Resources", description: "Coal, limestone, granite, clay, sand, and salt potential." },
-  { id: "waterResources", label: "Water", group: "Resources", description: "Groundwater, aquifer, freshwater, and spring potential." },
-  { id: "buildingMaterials", label: "Building Materials", group: "Resources", description: "Stone, gravel, clay, and natural building material availability." },
-  { id: "rareMaterials", label: "Rare Materials", group: "Resources", description: "Rare earth, uranium, sulfur, and quartz potential." },
-  { id: "biomes", label: "Biomes", group: "Future Layers", description: "Live deterministic biome classifications." },
-  { id: "vegetation", label: "Vegetation", group: "Future Layers", description: "Live dominant plant ecology and biomass." },
-  { id: "animals", label: "Animals", group: "Ecosystem", description: "Animal ecology status for the selected cell or planet." },
-  { id: "settlements", label: "Settlements", group: "Human Systems", description: "Emergent camps and settlement permanence." },
-  { id: "ecosystemMigration", label: "Migration", group: "Ecosystem", description: "Population movement pressure and realized neighbor migration." },
-  { id: "foodAvailability", label: "Food Availability", group: "Ecosystem", description: "Food stability after plant consumption and seasonal stress." },
-  { id: "predationPressure", label: "Predation", group: "Ecosystem", description: "Predator pressure on herbivore populations." },
-  { id: "ecosystemHealth", label: "Ecosystem Health", group: "Ecosystem", description: "Composite cell health from biodiversity, food, balance, migration, water, and climate stress." },
-  { id: "carryingCapacity", label: "Carrying Capacity", group: "Ecosystem", description: "Wildlife usage of available carrying capacity." },
-  { id: "plantConsumption", label: "Plant Consumption", group: "Ecosystem", description: "Edible biomass consumed by herbivores and omnivores." },
-  { id: "adaptationFitness", label: "Overall Fitness", group: "Adaptation", description: "Population fitness after habitat, food, climate, movement, predation, and adaptation multipliers." },
-  { id: "adaptationCold", label: "Cold Adaptation", group: "Adaptation", description: "Average cold tolerance among present populations." },
-  { id: "adaptationHeat", label: "Heat Adaptation", group: "Adaptation", description: "Average heat tolerance among present populations." },
-  { id: "adaptationDrought", label: "Drought Adaptation", group: "Adaptation", description: "Average drought tolerance among present populations." },
-  { id: "adaptationDisease", label: "Disease Resistance", group: "Adaptation", description: "Average disease resistance among present populations." },
-  { id: "adaptationMigration", label: "Migration Instinct", group: "Adaptation", description: "Average migration instinct among present populations." },
-  { id: "adaptationForaging", label: "Foraging Efficiency", group: "Adaptation", description: "Average foraging efficiency among present populations." },
-  { id: "adaptationPredator", label: "Predator Awareness", group: "Adaptation", description: "Average predator awareness among present populations." },
-  { id: "civilizations", label: "Civilizations", group: "Future Layers", description: "Civilization status for the selected cell or planet." },
+  { id: "biomes", label: "Biomes", group: "Future Layers", description: "Reserved atlas slot for biome rendering.", disabled: true },
+  { id: "vegetation", label: "Vegetation", group: "Future Layers", description: "Reserved atlas slot for vegetation rendering.", disabled: true },
+  { id: "animals", label: "Animals", group: "Future Layers", description: "Reserved atlas slot for fauna layers.", disabled: true },
+  { id: "civilizations", label: "Civilizations", group: "Future Layers", description: "Reserved atlas slot for civilization systems.", disabled: true },
 ];
 
 const DEFAULT_OVERLAYS: Record<OverlayId, boolean> = {
@@ -239,123 +164,9 @@ const DEFAULT_OVERLAYS: Record<OverlayId, boolean> = {
   cellIds: false,
   neighborLinks: false,
   drainageArrows: false,
-  animalMovementVectors: false,
   pressureBands: false,
   mountainOutlines: false,
 };
-
-function createAutoOverlayMask(totalCells: number, scale: number): Record<OverlayId, boolean> {
-  const far = scale < 0.6;
-  const medium = scale >= 0.6 && scale <= 1.2;
-  const close = scale > 1.2;
-
-  const mask: Record<OverlayId, boolean> = {
-    gridLines: close,
-    cellIds: close && totalCells <= 64 * 128,
-    neighborLinks: close && totalCells <= 64 * 128,
-    drainageArrows: close && totalCells <= 256 * 512,
-    animalMovementVectors: close && totalCells <= 64 * 128,
-    windArrows: medium || close,
-    pressureBands: medium || close,
-    watershedBoundaries: medium || close,
-    coastlines: medium || close,
-    latitudeBands: !close,
-    mountainOutlines: medium || close,
-  };
-
-  if (totalCells >= 256 * 512) {
-    mask.cellIds = false;
-    mask.neighborLinks = false;
-  }
-
-  if (totalCells >= 1024 * 2048) {
-    mask.gridLines = false;
-    mask.drainageArrows = false;
-    mask.animalMovementVectors = false;
-    mask.windArrows = medium || close;
-  }
-
-  if (far) {
-    mask.windArrows = false;
-    mask.watershedBoundaries = false;
-    mask.pressureBands = false;
-    mask.coastlines = true;
-    mask.mountainOutlines = false;
-    mask.gridLines = false;
-    mask.cellIds = false;
-    mask.neighborLinks = false;
-    mask.drainageArrows = false;
-    mask.animalMovementVectors = false;
-  }
-
-  return mask;
-}
-
-function readInitialSelectedCellId(snapshot: AtlasSnapshot): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const query = new URLSearchParams(window.location.search);
-  const queryCellId = query.get("cell");
-
-  if (queryCellId) {
-    return queryCellId;
-  }
-
-  try {
-    const stored = JSON.parse(window.sessionStorage.getItem(SELECTED_CELL_STORAGE_KEY) ?? "null") as {
-      worldId?: string;
-      day?: number;
-      cellId?: string;
-    } | null;
-
-    if (stored?.worldId === snapshot.worldId && stored.day === snapshot.selectedDay) {
-      return stored.cellId ?? null;
-    }
-  } catch {
-    window.sessionStorage.removeItem(SELECTED_CELL_STORAGE_KEY);
-  }
-
-  return null;
-}
-
-function readSearchHistory(): Array<{ q: string; pinned?: boolean; at: number }> {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem("atlasSearchHistory");
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function syncAtlasLocation(snapshot: AtlasSnapshot, cellId: string | null) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  const query = new URLSearchParams(window.location.search);
-  query.set("world", snapshot.worldId);
-  query.set("day", String(snapshot.selectedDay));
-
-  if (cellId) {
-    query.set("cell", cellId);
-  } else {
-    query.delete("cell");
-  }
-
-  const queryString = query.toString();
-  const syncedUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
-
-  if (`${window.location.pathname}${window.location.search}` !== syncedUrl) {
-    window.history.replaceState(window.history.state, "", syncedUrl);
-  }
-}
 
 const TERRAIN_COLORS: Record<string, string> = {
   DEEP_OCEAN: "#0d2a6d",
@@ -417,15 +228,6 @@ function formatPercent(value: number): string {
 
 function formatTemperature(value: number): string {
   return `${formatNumber(value, 1)} C`;
-}
-
-function formatAtlasLabel(value: string | null | undefined, fallback: string): string {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : fallback;
-}
-
-function formatTagList(tags: readonly string[], fallback = "-" ): string {
-  return tags.length > 0 ? tags.join(", ") : fallback;
 }
 
 function formatLatitude(value: number): string {
@@ -534,20 +336,6 @@ function getLayerRange(snapshot: AtlasSnapshot, layerId: LayerId): NumericRange 
     case "atmosphere":
     case "pressureZones":
     case "ocean":
-    case "resourceRichness":
-    case "metals":
-    case "industrial":
-    case "waterResources":
-    case "buildingMaterials":
-    case "rareMaterials":
-    case "adaptationFitness":
-    case "adaptationCold":
-    case "adaptationHeat":
-    case "adaptationDrought":
-    case "adaptationDisease":
-    case "adaptationMigration":
-    case "adaptationForaging":
-    case "adaptationPredator":
       return { minimum: 0, maximum: 1 };
     case "daylightHours":
       return { minimum: 0, maximum: 24 };
@@ -728,123 +516,6 @@ function getLayerColor(snapshot: AtlasSnapshot, cell: AtlasCell, layerId: LayerI
         { at: 0.5, color: "#a2b05a" },
         { at: 1, color: "#99623c" },
       ]);
-    case "resourceRichness":
-      return sampleGradient(normalizeValue(cell.resourceRichness, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#17202a" },
-        { at: 0.35, color: "#4d6f5f" },
-        { at: 0.7, color: "#c2a85b" },
-        { at: 1, color: "#f2e8c8" },
-      ]);
-    case "metals":
-      return sampleGradient(normalizeValue(cell.metalRichness, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#18212b" },
-        { at: 0.35, color: "#51606c" },
-        { at: 0.7, color: "#b4864a" },
-        { at: 1, color: "#f0d789" },
-      ]);
-    case "industrial":
-      return sampleGradient(normalizeValue(cell.industrialRichness, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#1e2422" },
-        { at: 0.38, color: "#5d665d" },
-        { at: 0.72, color: "#b89f73" },
-        { at: 1, color: "#eee3c8" },
-      ]);
-    case "waterResources":
-      return sampleGradient(normalizeValue(cell.waterRichness, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#34271f" },
-        { at: 0.35, color: "#5e7a78" },
-        { at: 0.7, color: "#4aa3b7" },
-        { at: 1, color: "#bfefff" },
-      ]);
-    case "buildingMaterials":
-      return sampleGradient(normalizeValue(cell.buildingMaterialAvailability, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#202222" },
-        { at: 0.4, color: "#6d6d62" },
-        { at: 0.75, color: "#b6ad92" },
-        { at: 1, color: "#f1ead8" },
-      ]);
-    case "rareMaterials":
-      return sampleGradient(normalizeValue(cell.rareMaterialRichness, range ?? { minimum: 0, maximum: 1 }), [
-        { at: 0, color: "#171c2a" },
-        { at: 0.36, color: "#365876" },
-        { at: 0.72, color: "#55a987" },
-        { at: 1, color: "#d6f3bb" },
-      ]);
-    case "biomes":
-      return cell.biomeColor || "#4b5563";
-    case "vegetation":
-      return interpolateColor("#20251d", cell.dominantPlantColor || "#5f7d3a", clamp(cell.plantDensity * 0.72 + cell.biomassScore * 0.28, 0, 1));
-    case "animals":
-      return interpolateColor("#20252a", cell.dominantAnimalGuildColor || "#7d8f4b", clamp(cell.animalDensity * 0.56 + cell.averageHabitatSuitability * 0.24 + cell.averagePopulationHealth * 0.2, 0, 1));
-    case "ecosystemMigration":
-      return sampleGradient(cell.migrationActivity, [
-        { at: 0, color: "#20272d" },
-        { at: 0.35, color: "#3b5b69" },
-        { at: 0.7, color: "#a57945" },
-        { at: 1, color: "#d15b45" },
-      ]);
-    case "foodAvailability":
-      return sampleGradient(cell.foodStability, [
-        { at: 0, color: "#3a2428" },
-        { at: 0.35, color: "#7d5c43" },
-        { at: 0.7, color: "#7f9b58" },
-        { at: 1, color: "#c7d979" },
-      ]);
-    case "predationPressure":
-      return sampleGradient(cell.predationPressure, [
-        { at: 0, color: "#242b31" },
-        { at: 0.35, color: "#5b5147" },
-        { at: 0.72, color: "#945044" },
-        { at: 1, color: "#6f2632" },
-      ]);
-    case "ecosystemHealth":
-      return sampleGradient(cell.ecosystemHealthScore, [
-        { at: 0, color: "#3b2025" },
-        { at: 0.32, color: "#8a573f" },
-        { at: 0.62, color: "#8e9d5b" },
-        { at: 0.82, color: "#5fa873" },
-        { at: 1, color: "#bce28a" },
-      ]);
-    case "carryingCapacity":
-      return sampleGradient(cell.carryingCapacityUsage, [
-        { at: 0, color: "#20272d" },
-        { at: 0.45, color: "#516f65" },
-        { at: 0.72, color: "#a59a54" },
-        { at: 1, color: "#be5d46" },
-      ]);
-    case "plantConsumption":
-      return sampleGradient(cell.plantConsumptionRate, [
-        { at: 0, color: "#202b24" },
-        { at: 0.4, color: "#607d50" },
-        { at: 0.72, color: "#b18a4d" },
-        { at: 1, color: "#b8463e" },
-      ]);
-    case "adaptationFitness":
-    case "adaptationCold":
-    case "adaptationHeat":
-    case "adaptationDrought":
-    case "adaptationDisease":
-    case "adaptationMigration":
-    case "adaptationForaging":
-    case "adaptationPredator":
-      return sampleGradient(getAdaptationLayerValue(cell, layerId), [
-        { at: 0, color: "#252832" },
-        { at: 0.32, color: "#4f5d6c" },
-        { at: 0.58, color: "#6d8f75" },
-        { at: 0.78, color: "#b6ad67" },
-        { at: 1, color: "#f1d98d" },
-      ]);
-    case "settlements": {
-      const settlement = snapshot.settlements.settlements.find((entry) => entry.occupiedCells.includes(cell.id) || entry.homeCellId === cell.id);
-      return settlement ? sampleGradient(settlement.permanence, [
-        { at: 0, color: "#3a3430" },
-        { at: 0.35, color: "#766451" },
-        { at: 0.7, color: "#8ca06a" },
-        { at: 1, color: "#d3c07c" },
-      ]) : "#303238";
-    }
-    case "civilizations":
-      return "#303238";
     default:
       return "#3b4550";
   }
@@ -869,49 +540,6 @@ function getLegendItems(snapshot: AtlasSnapshot, layerId: LayerId): LegendItem[]
     case "weather":
     case "weatherType":
       return Object.entries(WEATHER_COLORS).map(([label, color]) => ({ label: titleize(label), color }));
-    case "biomes":
-      return getTopCellEntries(snapshot.cells, (cell) => cell.biomeKey, (cell) => ({ label: formatAtlasLabel(cell.biomeName, "Unclassified"), color: cell.biomeColor || "#4b5563" }), 8);
-    case "vegetation":
-      return getTopCellEntries(snapshot.cells, (cell) => cell.dominantPlantKey, (cell) => ({ label: formatAtlasLabel(cell.dominantPlantName, "No Established Plant Life"), color: cell.dominantPlantColor || "#5f7d3a" }), 8);
-    case "animals":
-      return getTopCellEntries(snapshot.cells.filter((cell) => cell.dominantSpeciesId !== "none"), (cell) => cell.dominantSpeciesId, (cell) => ({ label: cell.dominantSpeciesName, color: cell.dominantAnimalGuildColor || "#7d8f4b" }), 8);
-    case "ecosystemHealth":
-      return [
-        { label: "Collapsed", color: "#3b2025" },
-        { label: "Collapsing", color: "#8a573f" },
-        { label: "Stressed", color: "#8e9d5b" },
-        { label: "Healthy", color: "#5fa873" },
-        { label: "Excellent", color: "#bce28a" },
-      ];
-    case "ecosystemMigration":
-    case "foodAvailability":
-    case "predationPressure":
-    case "carryingCapacity":
-    case "plantConsumption":
-      return [0, 0.25, 0.5, 0.75, 1].map((value) => ({ label: formatNumber(value, 2), color: getLayerColor(snapshot, { ...snapshot.cells[0], migrationActivity: value, foodStability: value, predationPressure: value, carryingCapacityUsage: value, plantConsumptionRate: value, averageFitness: value } as AtlasCell, layerId) }));
-    case "adaptationFitness":
-    case "adaptationCold":
-    case "adaptationHeat":
-    case "adaptationDrought":
-    case "adaptationDisease":
-    case "adaptationMigration":
-    case "adaptationForaging":
-    case "adaptationPredator":
-      return [0, 0.25, 0.5, 0.75, 1].map((value) => ({ label: formatNumber(value, 2), color: sampleGradient(value, [
-        { at: 0, color: "#252832" },
-        { at: 0.32, color: "#4f5d6c" },
-        { at: 0.58, color: "#6d8f75" },
-        { at: 0.78, color: "#b6ad67" },
-        { at: 1, color: "#f1d98d" },
-      ]) }));
-    case "settlements":
-      return [
-        { label: "No camp", color: "#303238" },
-        { label: "Temporary", color: "#766451" },
-        { label: "Permanent", color: "#d3c07c" },
-      ];
-    case "civilizations":
-      return [{ label: "Not Generated Yet", color: "#303238" }];
     case "watersheds":
       return snapshot.cells.slice(0, 6).map((cell) => ({
         label: cell.watershedId,
@@ -933,7 +561,7 @@ function getLegendItems(snapshot: AtlasSnapshot, layerId: LayerId): LegendItem[]
 
         return {
           label: formatNumber(value, layerId === "averageTemperature" ? 1 : 2),
-          color: getLayerColor(snapshot, { ...cell, averageTemperatureC: value, solarEnergy: value, daylightHours: value, windStrength: value, distanceToOcean: value, atmosphericStability: value, moistureTransportPotential: value, rainShadowPotential: value, relativeHumidity: value, cloudCover: value, stormPotential: value, snowPotential: value, fogPotential: value, drynessIndex: value, elevation: value, resourceRichness: value, metalRichness: value, industrialRichness: value, waterRichness: value, buildingMaterialAvailability: value, rareMaterialRichness: value } as AtlasCell, layerId),
+          color: getLayerColor(snapshot, { ...cell, averageTemperatureC: value, solarEnergy: value, daylightHours: value, windStrength: value, distanceToOcean: value, atmosphericStability: value, moistureTransportPotential: value, rainShadowPotential: value, relativeHumidity: value, cloudCover: value, stormPotential: value, snowPotential: value, fogPotential: value, drynessIndex: value, elevation: value } as AtlasCell, layerId),
         };
       });
     }
@@ -1030,116 +658,6 @@ function windDirectionVector(direction: string): { x: number; y: number } {
   }
 }
 
-
-type AtlasSettlementView = AtlasSnapshot["settlements"]["settlements"][number];
-
-function getSettlementsByCell(settlements: readonly AtlasSettlementView[]): Map<string, AtlasSettlementView[]> {
-  const map = new Map<string, AtlasSettlementView[]>();
-
-  for (const settlement of settlements) {
-    for (const cellId of new Set([settlement.homeCellId, ...settlement.occupiedCells])) {
-      map.set(cellId, [...(map.get(cellId) ?? []), settlement].sort((left, right) => right.importance - left.importance || left.name.localeCompare(right.name)));
-    }
-  }
-
-  return map;
-}
-type AtlasHumanAgentView = AtlasSnapshot["humans"]["agents"][number];
-
-type HumanMarkerPoint = {
-  human: AtlasHumanAgentView;
-  x: number;
-  y: number;
-  radius: number;
-};
-
-function getHumansByCell(humans: readonly AtlasHumanAgentView[]): Map<string, AtlasHumanAgentView[]> {
-  const map = new Map<string, AtlasHumanAgentView[]>();
-
-  for (const human of humans) {
-    const current = map.get(human.currentCellId) ?? [];
-    current.push(human);
-    map.set(human.currentCellId, current);
-  }
-
-  return map;
-}
-
-function getHumanMarkerPoints(
-  snapshot: AtlasSnapshot,
-  transform: ReturnType<typeof createAtlasCoordinateTransform>,
-  cellById: Map<string, AtlasCell>,
-): HumanMarkerPoint[] {
-  const humansByCell = getHumansByCell(snapshot.humans.agents);
-  const points: HumanMarkerPoint[] = [];
-
-  for (const [cellId, humans] of humansByCell) {
-    const cell = cellById.get(cellId);
-
-    if (!cell) {
-      continue;
-    }
-
-    const rect = transform.cellRect(cell);
-    const radius = clamp(Math.min(rect.width, rect.height) * 0.22, 5, 13);
-    const gap = Math.max(radius * 1.15, rect.width * 0.14);
-
-    humans.forEach((human, index) => {
-      const centeredIndex = index - (humans.length - 1) / 2;
-      points.push({
-        human,
-        x: rect.x + rect.width / 2 + centeredIndex * gap * 2,
-        y: rect.y + rect.height / 2,
-        radius,
-      });
-    });
-  }
-
-  return points;
-}
-
-function drawHumanMarker(context: CanvasRenderingContext2D, point: HumanMarkerPoint, selected: boolean): void {
-  const { human, x, y, radius } = point;
-  const fill = human.sex === "male" ? "#7dd3fc" : "#f0abfc";
-
-  context.save();
-  context.fillStyle = fill;
-  context.strokeStyle = selected ? "#fff7cc" : "rgba(10, 12, 20, 0.85)";
-  context.lineWidth = selected ? 2.4 : 1.4;
-  context.beginPath();
-  context.moveTo(x, y - radius);
-  context.lineTo(x + radius, y);
-  context.lineTo(x, y + radius);
-  context.lineTo(x - radius, y);
-  context.closePath();
-  context.fill();
-  context.stroke();
-  context.fillStyle = "rgba(5, 8, 12, 0.82)";
-  context.font = `${Math.max(8, radius * 0.95)}px var(--font-sans)`;
-  context.fillText(human.sex === "male" ? "M" : "F", x - radius * 0.38, y + radius * 0.34);
-  context.restore();
-}
-
-function findHumanMarkerAt(
-  snapshot: AtlasSnapshot,
-  transform: ReturnType<typeof createAtlasCoordinateTransform>,
-  cellById: Map<string, AtlasCell>,
-  x: number,
-  y: number,
-): AtlasHumanAgentView | null {
-  const points = getHumanMarkerPoints(snapshot, transform, cellById);
-
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    const point = points[index];
-    const distance = Math.hypot(point.x - x, point.y - y);
-
-    if (distance <= point.radius * 1.65) {
-      return point.human;
-    }
-  }
-
-  return null;
-}
 function drawArrow(context: CanvasRenderingContext2D, fromX: number, fromY: number, toX: number, toY: number) {
   const headLength = 4;
   const angle = Math.atan2(toY - fromY, toX - fromX);
@@ -1157,306 +675,6 @@ function drawArrow(context: CanvasRenderingContext2D, fromX: number, fromY: numb
   context.fill();
 }
 
-
-type TopCellEntry<T> = {
-  key: string;
-  cell: AtlasCell;
-  count: number;
-  meta: T;
-};
-
-function getTopCellEntry<T>(
-  cells: readonly AtlasCell[],
-  keyForCell: (cell: AtlasCell) => string,
-  metaForCell: (cell: AtlasCell) => T,
-  filterCell: (cell: AtlasCell) => boolean = () => true,
-): TopCellEntry<T> | null {
-  const counts = new Map<string, TopCellEntry<T>>();
-
-  for (const cell of cells) {
-    if (!filterCell(cell)) {
-      continue;
-    }
-
-    const key = keyForCell(cell) || "unknown";
-    const current = counts.get(key);
-
-    if (current) {
-      current.count += 1;
-    } else {
-      counts.set(key, { key, cell, count: 1, meta: metaForCell(cell) });
-    }
-  }
-
-  return [...counts.values()].sort((left, right) => right.count - left.count)[0] ?? null;
-}
-
-function getTopCellEntries<T extends LegendItem>(
-  cells: readonly AtlasCell[],
-  keyForCell: (cell: AtlasCell) => string,
-  metaForCell: (cell: AtlasCell) => T,
-  limit: number,
-): T[] {
-  const counts = new Map<string, TopCellEntry<T>>();
-
-  for (const cell of cells) {
-    const key = keyForCell(cell) || "unknown";
-    const current = counts.get(key);
-
-    if (current) {
-      current.count += 1;
-    } else {
-      counts.set(key, { key, cell, count: 1, meta: metaForCell(cell) });
-    }
-  }
-
-  return [...counts.values()]
-    .sort((left, right) => right.count - left.count)
-    .slice(0, limit)
-    .map((entry) => entry.meta);
-}
-
-type AdaptationProfileKey = keyof AtlasCell["animalPopulations"][number]["adaptationProfile"];
-
-function averagePopulationAdaptation(cell: AtlasCell, trait: AdaptationProfileKey): number {
-  const populations = cell.animalPopulations.filter((population) => population.population > 0);
-
-  if (populations.length === 0) {
-    return 0;
-  }
-
-  return populations.reduce((sum, population) => sum + (population.adaptationProfile?.[trait] ?? 0), 0) / populations.length;
-}
-
-function getAdaptationLayerValue(cell: AtlasCell, layerId: LayerId): number {
-  switch (layerId) {
-    case "adaptationFitness":
-      return cell.averageFitness;
-    case "adaptationCold":
-      return averagePopulationAdaptation(cell, "coldTolerance");
-    case "adaptationHeat":
-      return averagePopulationAdaptation(cell, "heatTolerance");
-    case "adaptationDrought":
-      return averagePopulationAdaptation(cell, "droughtTolerance");
-    case "adaptationDisease":
-      return averagePopulationAdaptation(cell, "diseaseResistance");
-    case "adaptationMigration":
-      return averagePopulationAdaptation(cell, "migrationInstinct");
-    case "adaptationForaging":
-      return averagePopulationAdaptation(cell, "foragingEfficiency");
-    case "adaptationPredator":
-      return averagePopulationAdaptation(cell, "predatorAwareness");
-    default:
-      return 0;
-  }
-}
-
-function averageCellMetric(cells: readonly AtlasCell[], metric: (cell: AtlasCell) => number): number {
-  if (cells.length === 0) {
-    return 0;
-  }
-
-  return cells.reduce((sum, cell) => sum + metric(cell), 0) / cells.length;
-}
-
-type FutureLayerMetrics = {
-  scopeLabel: string;
-  scopeDescription: string;
-  isCellScope: boolean;
-  biomeName: string;
-  biomeCategory: string;
-  biomeColor: string;
-  biomeCoverage: string | null;
-  biomeTags: readonly string[];
-  habitabilityScore: number;
-  fertilityScore: number;
-  waterAvailabilityScore: number;
-  vegetationDensity: number;
-  dominantPlantName: string;
-  dominantPlantCategory: string;
-  dominantPlantColor: string;
-  plantCoverage: string | null;
-  plantSuitabilityScore: number;
-  plantDensity: number;
-  biomassScore: number;
-  biodiversityScore: number;
-  ediblePlantScore: number;
-  woodMaterialScore: number;
-  medicinalPotentialScore: number;
-  regrowthRate: number;
-  seasonalStressScore: number;
-  plantTags: readonly string[];
-  dominantSpeciesName: string;
-  dominantAnimalGuildName: string;
-  dominantAnimalGuildColor: string;
-  animalCoverage: string | null;
-  animalSuitabilityScore: number;
-  animalDensity: number;
-  totalWildlifePopulation: number;
-  speciesCount: number;
-  averagePopulationHealth: number;
-  averageHabitatSuitability: number;
-  foodAvailability: number;
-  migrationPressure: number;
-  plantConsumptionRate: number;
-  effectivePlantBiomass: number;
-  predationPressure: number;
-  predatorPreyBalance: number;
-  foodStability: number;
-  carryingCapacityUsage: number;
-  migrationActivity: number;
-  populationGrowthRate: number;
-  ecosystemHealthScore: number;
-  ecosystemHealthStatus: AtlasCell["ecosystemHealthStatus"];
-  ecosystemEvents: AtlasCell["ecosystemEvents"];
-  ecosystemHistory: AtlasCell["ecosystemHistory"];
-  movementVectors: AtlasCell["movementVectors"];
-  animalPopulations: AtlasCell["animalPopulations"];
-  animalTags: readonly string[];
-};
-
-function getFutureLayerMetrics(snapshot: AtlasSnapshot, selectedCell: AtlasCell | null): FutureLayerMetrics {
-  if (selectedCell) {
-    return {
-      scopeLabel: "Selected Cell",
-      scopeDescription: selectedCell.id,
-      isCellScope: true,
-      biomeName: formatAtlasLabel(selectedCell.biomeName, "Unclassified"),
-      biomeCategory: titleize(formatAtlasLabel(selectedCell.biomeCategory, "unclassified")),
-      biomeColor: selectedCell.biomeColor || "#4b5563",
-      biomeCoverage: null,
-      biomeTags: selectedCell.biomeTags,
-      habitabilityScore: selectedCell.habitabilityScore,
-      fertilityScore: selectedCell.fertilityScore,
-      waterAvailabilityScore: selectedCell.waterAvailabilityScore,
-      vegetationDensity: selectedCell.vegetationDensity,
-      dominantPlantName: formatAtlasLabel(selectedCell.dominantPlantName, "No Established Plant Life"),
-      dominantPlantCategory: titleize(formatAtlasLabel(selectedCell.dominantPlantCategory, "none")),
-      dominantPlantColor: selectedCell.dominantPlantColor || "#5f7d3a",
-      plantCoverage: null,
-      plantSuitabilityScore: selectedCell.plantSuitabilityScore,
-      plantDensity: selectedCell.plantDensity,
-      biomassScore: selectedCell.biomassScore,
-      biodiversityScore: selectedCell.biodiversityScore,
-      ediblePlantScore: selectedCell.ediblePlantScore,
-      woodMaterialScore: selectedCell.woodMaterialScore,
-      medicinalPotentialScore: selectedCell.medicinalPotentialScore,
-      regrowthRate: selectedCell.regrowthRate,
-      seasonalStressScore: selectedCell.seasonalStressScore,
-      plantTags: selectedCell.plantTags,
-      dominantSpeciesName: selectedCell.dominantSpeciesName,
-      dominantAnimalGuildName: selectedCell.dominantAnimalGuildName,
-      dominantAnimalGuildColor: selectedCell.dominantAnimalGuildColor,
-      animalCoverage: null,
-      animalSuitabilityScore: selectedCell.animalSuitabilityScore,
-      animalDensity: selectedCell.animalDensity,
-      totalWildlifePopulation: selectedCell.totalWildlifePopulation,
-      speciesCount: selectedCell.speciesCount,
-      averagePopulationHealth: selectedCell.averagePopulationHealth,
-      averageHabitatSuitability: selectedCell.averageHabitatSuitability,
-      foodAvailability: selectedCell.animalPopulations[0]?.foodAvailability ?? selectedCell.preyAvailability,
-      migrationPressure: selectedCell.migrationPressure,
-      plantConsumptionRate: selectedCell.plantConsumptionRate,
-      effectivePlantBiomass: selectedCell.effectivePlantBiomass,
-      predationPressure: selectedCell.predationPressure,
-      predatorPreyBalance: selectedCell.predatorPreyBalance,
-      foodStability: selectedCell.foodStability,
-      carryingCapacityUsage: selectedCell.carryingCapacityUsage,
-      migrationActivity: selectedCell.migrationActivity,
-      populationGrowthRate: selectedCell.populationGrowthRate,
-      ecosystemHealthScore: selectedCell.ecosystemHealthScore,
-      ecosystemHealthStatus: selectedCell.ecosystemHealthStatus,
-      ecosystemEvents: selectedCell.ecosystemEvents,
-      ecosystemHistory: selectedCell.ecosystemHistory,
-      movementVectors: selectedCell.movementVectors,
-      animalPopulations: selectedCell.animalPopulations,
-      animalTags: selectedCell.animalTags,
-    };
-  }
-
-  const cells = snapshot.cells;
-  const dominantBiome = getTopCellEntry(cells, (cell) => cell.biomeKey, (cell) => ({
-    name: formatAtlasLabel(cell.biomeName, "Unclassified"),
-    category: titleize(formatAtlasLabel(cell.biomeCategory, "unclassified")),
-    color: cell.biomeColor || "#4b5563",
-    tags: cell.biomeTags,
-  }));
-  const plantCells = cells.some((cell) => cell.dominantPlantKey !== "none")
-    ? cells.filter((cell) => cell.dominantPlantKey !== "none")
-    : cells;
-  const dominantPlant = getTopCellEntry(plantCells, (cell) => cell.dominantPlantKey, (cell) => ({
-    name: formatAtlasLabel(cell.dominantPlantName, "No Established Plant Life"),
-    category: titleize(formatAtlasLabel(cell.dominantPlantCategory, "none")),
-    color: cell.dominantPlantColor || "#5f7d3a",
-    tags: cell.plantTags,
-  }));
-  const animalCells = cells.some((cell) => cell.totalWildlifePopulation > 0)
-    ? cells.filter((cell) => cell.totalWildlifePopulation > 0)
-    : cells;
-  const dominantAnimal = getTopCellEntry(animalCells, (cell) => cell.dominantSpeciesId, (cell) => ({
-    name: formatAtlasLabel(cell.dominantSpeciesName, "No Established Wildlife"),
-    guildName: formatAtlasLabel(cell.dominantAnimalGuildName, "No Established Animal Guild"),
-    color: cell.dominantAnimalGuildColor || "#7d8f4b",
-    tags: cell.animalTags,
-  }));
-  const totalCells = Math.max(cells.length, 1);
-
-  return {
-    scopeLabel: "Planet Summary",
-    scopeDescription: `${formatNumber(snapshot.grid.totalCells, 0)} cells`,
-    isCellScope: false,
-    biomeName: dominantBiome?.meta.name ?? "Unclassified",
-    biomeCategory: dominantBiome?.meta.category ?? "Unclassified",
-    biomeColor: dominantBiome?.meta.color ?? "#4b5563",
-    biomeCoverage: dominantBiome ? formatPercent(dominantBiome.count / totalCells) : null,
-    biomeTags: dominantBiome?.meta.tags ?? [],
-    habitabilityScore: averageCellMetric(cells, (cell) => cell.habitabilityScore),
-    fertilityScore: averageCellMetric(cells, (cell) => cell.fertilityScore),
-    waterAvailabilityScore: averageCellMetric(cells, (cell) => cell.waterAvailabilityScore),
-    vegetationDensity: averageCellMetric(cells, (cell) => cell.vegetationDensity),
-    dominantPlantName: dominantPlant?.meta.name ?? "No Established Plant Life",
-    dominantPlantCategory: dominantPlant?.meta.category ?? "None",
-    dominantPlantColor: dominantPlant?.meta.color ?? "#5f7d3a",
-    plantCoverage: dominantPlant ? formatPercent(dominantPlant.count / totalCells) : null,
-    plantSuitabilityScore: averageCellMetric(cells, (cell) => cell.plantSuitabilityScore),
-    plantDensity: averageCellMetric(cells, (cell) => cell.plantDensity),
-    biomassScore: averageCellMetric(cells, (cell) => cell.biomassScore),
-    biodiversityScore: averageCellMetric(cells, (cell) => cell.biodiversityScore),
-    ediblePlantScore: averageCellMetric(cells, (cell) => cell.ediblePlantScore),
-    woodMaterialScore: averageCellMetric(cells, (cell) => cell.woodMaterialScore),
-    medicinalPotentialScore: averageCellMetric(cells, (cell) => cell.medicinalPotentialScore),
-    regrowthRate: averageCellMetric(cells, (cell) => cell.regrowthRate),
-    seasonalStressScore: averageCellMetric(cells, (cell) => cell.seasonalStressScore),
-    plantTags: dominantPlant?.meta.tags ?? [],
-    dominantSpeciesName: dominantAnimal?.meta.name ?? "No Established Wildlife",
-    dominantAnimalGuildName: dominantAnimal?.meta.guildName ?? "No Established Animal Guild",
-    dominantAnimalGuildColor: dominantAnimal?.meta.color ?? "#7d8f4b",
-    animalCoverage: dominantAnimal ? formatPercent(dominantAnimal.count / totalCells) : null,
-    animalSuitabilityScore: averageCellMetric(cells, (cell) => cell.animalSuitabilityScore),
-    animalDensity: averageCellMetric(cells, (cell) => cell.animalDensity),
-    totalWildlifePopulation: cells.reduce((sum, cell) => sum + cell.totalWildlifePopulation, 0),
-    speciesCount: Math.max(...cells.map((cell) => cell.speciesCount), 0),
-    averagePopulationHealth: averageCellMetric(cells, (cell) => cell.averagePopulationHealth),
-    averageHabitatSuitability: averageCellMetric(cells, (cell) => cell.averageHabitatSuitability),
-    foodAvailability: averageCellMetric(cells, (cell) => cell.animalPopulations[0]?.foodAvailability ?? cell.preyAvailability),
-    migrationPressure: averageCellMetric(cells, (cell) => cell.migrationPressure),
-    plantConsumptionRate: averageCellMetric(cells, (cell) => cell.plantConsumptionRate),
-    effectivePlantBiomass: averageCellMetric(cells, (cell) => cell.effectivePlantBiomass),
-    predationPressure: averageCellMetric(cells, (cell) => cell.predationPressure),
-    predatorPreyBalance: averageCellMetric(cells, (cell) => cell.predatorPreyBalance),
-    foodStability: averageCellMetric(cells, (cell) => cell.foodStability),
-    carryingCapacityUsage: averageCellMetric(cells, (cell) => cell.carryingCapacityUsage),
-    migrationActivity: averageCellMetric(cells, (cell) => cell.migrationActivity),
-    populationGrowthRate: averageCellMetric(cells, (cell) => cell.populationGrowthRate),
-    ecosystemHealthScore: averageCellMetric(cells, (cell) => cell.ecosystemHealthScore),
-    ecosystemHealthStatus: cells.filter((cell) => cell.ecosystemHealthStatus === "Collapsed" || cell.ecosystemHealthStatus === "Collapsing").length > cells.length * 0.1 ? "Stressed" : "Healthy",
-    ecosystemEvents: cells.flatMap((cell) => cell.ecosystemEvents).slice(0, 6),
-    ecosystemHistory: cells.flatMap((cell) => cell.ecosystemHistory).slice(0, 6),
-    movementVectors: cells.flatMap((cell) => cell.movementVectors).slice(0, 8),
-    animalPopulations: dominantAnimal ? cells.find((cell) => cell.dominantSpeciesName === dominantAnimal.meta.name)?.animalPopulations ?? [] : [],
-    animalTags: dominantAnimal?.meta.tags ?? [],
-  };
-}
 function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ label: string; value: string }> {
   const cells = snapshot.cells;
 
@@ -1520,89 +738,13 @@ function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ 
         { label: "Average dryness", value: formatPercent(snapshot.weatherSummary.averageDryness) },
         ...overall,
       ];
-    case "resourceRichness":
-    case "metals":
-    case "industrial":
-    case "waterResources":
-    case "buildingMaterials":
-    case "rareMaterials":
-      return [
-        { label: "Strongest mining", value: snapshot.statistics.strongestMiningRegion ? `${snapshot.statistics.strongestMiningRegion.cellId} (${formatNumber(snapshot.statistics.strongestMiningRegion.peakScore, 3)})` : "-" },
-        { label: "Resource diversity", value: formatPercent(snapshot.statistics.resourceDiversity) },
-        { label: "Richest aquifer", value: snapshot.statistics.richestAquifer ? `${snapshot.statistics.richestAquifer.cellId} (${snapshot.statistics.richestAquifer.cellCount} cells)` : "-" },
-        { label: "Average minerals", value: formatNumber(snapshot.statistics.averageMineralRichness, 3) },
-      ];
-    case "biomes": {
-      const metrics = getFutureLayerMetrics(snapshot, null);
-      return [
-        { label: "Dominant biome", value: metrics.biomeName },
-        { label: "Category", value: metrics.biomeCategory },
-        { label: "Coverage", value: metrics.biomeCoverage ?? "-" },
-        { label: "Average habitability", value: formatNumber(metrics.habitabilityScore, 3) },
-        { label: "Average fertility", value: formatNumber(metrics.fertilityScore, 3) },
-        { label: "Average water", value: formatNumber(metrics.waterAvailabilityScore, 3) },
-        { label: "Average vegetation", value: formatNumber(metrics.vegetationDensity, 3) },
-      ];
-    }
-    case "vegetation": {
-      const metrics = getFutureLayerMetrics(snapshot, null);
-      return [
-        { label: "Dominant plant", value: metrics.dominantPlantName },
-        { label: "Plant type", value: metrics.dominantPlantCategory },
-        { label: "Coverage", value: metrics.plantCoverage ?? "-" },
-        { label: "Average biomass", value: formatNumber(metrics.biomassScore, 3) },
-        { label: "Average biodiversity", value: formatNumber(metrics.biodiversityScore, 3) },
-        { label: "Average regrowth", value: formatNumber(metrics.regrowthRate, 3) },
-      ];
-    }
-    case "animals": {
-      const metrics = getFutureLayerMetrics(snapshot, null);
-      return [
-        { label: "Dominant species", value: metrics.dominantSpeciesName },
-        { label: "Dominant guild", value: metrics.dominantAnimalGuildName },
-        { label: "Coverage", value: metrics.animalCoverage ?? "-" },
-        { label: "Total population", value: formatNumber(metrics.totalWildlifePopulation, 0) },
-        { label: "Average health", value: formatNumber(metrics.averagePopulationHealth, 3) },
-        { label: "Migration pressure", value: formatNumber(metrics.migrationPressure, 3) },
-      ];
-    }
-    case "ecosystemMigration":
-      return [{ label: "Migration activity", value: formatNumber(averageCellMetric(cells, (cell) => cell.migrationActivity), 3) }, { label: "Movement vectors", value: formatNumber(cells.reduce((sum, cell) => sum + cell.movementVectors.length, 0), 0) }, ...overall];
-    case "foodAvailability":
-      return [{ label: "Food stability", value: formatNumber(averageCellMetric(cells, (cell) => cell.foodStability), 3) }, { label: "Effective biomass", value: formatNumber(averageCellMetric(cells, (cell) => cell.effectivePlantBiomass), 3) }, ...overall];
-    case "predationPressure":
-      return [{ label: "Predation pressure", value: formatNumber(averageCellMetric(cells, (cell) => cell.predationPressure), 3) }, { label: "Predator balance", value: formatNumber(averageCellMetric(cells, (cell) => cell.predatorPreyBalance), 3) }, ...overall];
-    case "ecosystemHealth":
-      return [{ label: "Ecosystem health", value: formatNumber(averageCellMetric(cells, (cell) => cell.ecosystemHealthScore), 3) }, { label: "Collapsed habitats", value: formatNumber(cells.filter((cell) => cell.ecosystemHealthStatus === "Collapsed" || cell.ecosystemHealthStatus === "Collapsing").length, 0) }, ...overall];
-    case "carryingCapacity":
-      return [{ label: "Capacity usage", value: formatNumber(averageCellMetric(cells, (cell) => cell.carryingCapacityUsage), 3) }, { label: "Population growth", value: formatNumber(averageCellMetric(cells, (cell) => cell.populationGrowthRate), 4) }, ...overall];
-    case "plantConsumption":
-      return [{ label: "Plant consumption", value: formatNumber(averageCellMetric(cells, (cell) => cell.plantConsumptionRate), 3) }, { label: "Food stability", value: formatNumber(averageCellMetric(cells, (cell) => cell.foodStability), 3) }, ...overall];
-    case "adaptationFitness":
-    case "adaptationCold":
-    case "adaptationHeat":
-    case "adaptationDrought":
-    case "adaptationDisease":
-    case "adaptationMigration":
-    case "adaptationForaging":
-    case "adaptationPredator":
-      return [
-        { label: getLayerDefinition(layerId).label, value: formatNumber(averageCellMetric(cells, (cell) => getAdaptationLayerValue(cell, layerId)), 3) },
-        { label: "Average fitness", value: formatNumber(averageCellMetric(cells, (cell) => cell.averageFitness), 3) },
-        { label: "Adaptation diversity", value: formatNumber(averageCellMetric(cells, (cell) => cell.adaptationDiversity), 3) },
-        { label: "Climate adaptation", value: formatNumber(averageCellMetric(cells, (cell) => cell.averageClimateAdaptation), 3) },
-      ];
-    case "civilizations":
-      return [{ label: "Civilization layer", value: "Not Generated Yet" }];
-    case "watersheds": {
-      const overallWithoutDuplicate = overall.filter((s) => s.label !== "Largest watershed");
+    case "watersheds":
       return [
         { label: "Largest watershed", value: `${snapshot.hydrologySummary.largestWatershedEstimate} cells` },
         { label: "Largest basin", value: `${snapshot.hydrologySummary.largestBasinEstimate} cells` },
         { label: "Ocean cells", value: String(snapshot.hydrologySummary.oceanCells) },
-        ...overallWithoutDuplicate,
+        ...overall,
       ];
-    }
     default:
       return overall;
   }
@@ -1610,11 +752,9 @@ function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ 
 
 function getTooltipSummary(cell: AtlasCell) {
   return {
-    biome: formatAtlasLabel(cell.biomeName, "Unclassified"),
     hydrology: `${titleize(cell.waterBodyType)} / ws ${cell.watershedId}`,
     atmosphere: `${titleize(cell.pressureZone)} / ${cell.windDirection} ${formatNumber(cell.windStrength, 2)}`,
     weather: `${titleize(cell.weatherType)} / humidity ${formatPercent(cell.relativeHumidity)}`,
-    resources: `richness ${formatNumber(cell.resourceRichness, 3)} / bedrock ${titleize(cell.bedrockType)}`,
   };
 }
 
@@ -1629,17 +769,6 @@ async function fetchAtlasSnapshotFromApi(worldId: string, day: number): Promise<
 
   return response.json() as Promise<AtlasSnapshot>;
 }
-async function fetchWorldHealthFromApi(worldId: string): Promise<WorldHealthSummary> {
-  const response = await fetch(`/api/worlds/health?world=${encodeURIComponent(worldId)}`, {
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`World health request failed: ${response.status}`);
-  }
-
-  return response.json() as Promise<WorldHealthSummary>;
-}
 
 function DetailCard({ label, value }: { label: string; value: string }) {
   return (
@@ -1649,463 +778,6 @@ function DetailCard({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-
-function ObservatorySignalCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-h-28 border border-white/10 bg-black/30 p-4 shadow-[0_16px_36px_rgba(0,0,0,0.22)]">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-300/80">{label}</p>
-      <p className="mt-4 break-words text-sm leading-6 text-stone-50 sm:text-base">{value}</p>
-    </div>
-  );
-}
-
-function HumanMetricRows({ values }: { values: Record<string, number> }) {
-  return (
-    <div className="grid gap-1.5">
-      {Object.entries(values).map(([key, value]) => (
-        <div key={key} className="grid grid-cols-[88px_minmax(0,1fr)_42px] items-center gap-2 text-xs text-stone-300">
-          <span className="text-stone-500">{titleize(key)}</span>
-          <span className="h-1.5 overflow-hidden rounded-full bg-white/10">
-            <span className="block h-full rounded-full bg-amber-200/80" style={{ width: `${clamp(value, 0, 1) * 100}%` }} />
-          </span>
-          <span className="text-right text-stone-100">{formatNumber(value, 2)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function formatEmotionDelta(delta: number): string {
-  if (Math.abs(delta) < 0.005) {
-    return "0.00";
-  }
-
-  return `${delta > 0 ? "+" : ""}${formatNumber(delta, 2)}`;
-}
-
-function HumanEmotionExplainability({ human }: { human: AtlasHumanAgentView }) {
-  return (
-    <div data-testid="human-emotion-explainability" className="mt-4 border-t border-white/10 pt-4">
-      <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-200/80">Latest Emotion Change</p>
-      <p className="mt-2 text-xs leading-5 text-stone-100">{human.latestEmotionChangeSummary}</p>
-      <div className="mt-3 grid gap-3">
-        {human.emotionReasons.map((entry) => (
-          <div key={entry.emotion} className="border-t border-white/10 pt-3 first:border-t-0 first:pt-0">
-            <div className="flex items-start justify-between gap-3 text-xs">
-              <p className="font-medium text-stone-100">{titleize(entry.emotion)}</p>
-              <p className="shrink-0 text-stone-400">
-                {formatNumber(entry.before, 2)} -&gt; {formatNumber(entry.after, 2)} ({formatEmotionDelta(entry.delta)})
-              </p>
-            </div>
-            <p className="mt-1 text-xs leading-5 text-stone-300">{entry.summary}</p>
-            <p className="mt-1 text-xs text-stone-500">Reasons: {entry.reasons.join("; ")}</p>
-            {entry.causalEventLinks.length > 0 ? (
-              <div className="mt-2 grid gap-1 text-xs text-stone-400">
-                <p className="uppercase tracking-[0.2em] text-stone-500">Causal Event Links</p>
-                {entry.causalEventLinks.map((event) => (
-                  <p key={`${entry.emotion}-${event.id}`} className="break-words">
-                    Tick {event.tick}: {event.title} <span className="text-stone-600">{event.id}</span>
-                  </p>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function HumanInspectorPanel({
-  human,
-  humans,
-  onSelectHuman,
-  onFocusHuman,
-  onSimulateOneDay,
-}: {
-  human: AtlasHumanAgentView | null;
-  humans: readonly AtlasHumanAgentView[];
-  onSelectHuman: (human: AtlasHumanAgentView) => void;
-  onFocusHuman: (human: AtlasHumanAgentView) => void;
-  onSimulateOneDay: () => void;
-}) {
-  return (
-    <section data-testid="human-inspector" className="rounded-[2rem] border border-cyan-300/20 bg-[linear-gradient(180deg,_rgba(125,211,252,0.09),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-200/80">Human MVA</p>
-          <p className="mt-2 text-base text-stone-50">First Humans</p>
-        </div>
-        <button type="button" data-testid="simulate-human-day" onClick={onSimulateOneDay} className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-3 py-1.5 text-xs text-cyan-100">Simulate One Human Day</button>
-      </div>
-
-      <div data-testid="human-list" className="mt-4 grid gap-2">
-        {humans.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            data-testid={`human-list-${entry.sex}`}
-            onClick={() => onSelectHuman(entry)}
-            className={`rounded-xl border px-3 py-2 text-left text-sm transition ${human?.id === entry.id ? "border-cyan-300/50 bg-cyan-300/12 text-cyan-100" : "border-white/10 bg-white/[0.03] text-stone-200 hover:bg-white/[0.07]"}`}
-          >
-            <span className="block">{entry.label}</span>
-            <span className="mt-1 block text-xs text-stone-500">{entry.sex} / age {formatNumber(entry.approxAgeYears, 1)} / {entry.currentCellId}</span>
-          </button>
-        ))}
-      </div>
-
-      {human ? (
-        <div className="mt-4 space-y-3 text-sm text-stone-200">
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Selected Human</p>
-                <p className="mt-2 break-words text-stone-50">{human.label}</p>
-                <p className="mt-1 break-words text-xs text-stone-400">{human.id}</p>
-              </div>
-              <button type="button" onClick={() => onFocusHuman(human)} className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Focus</button>
-            </div>
-            <div className="mt-3 grid gap-2 text-xs text-stone-200">
-              <p>Sex {human.sex}</p>
-              <p>Age {formatNumber(human.approxAgeYears, 1)}</p>
-              <p>Current cell {human.currentCellId}</p>
-              <p>Current action {human.currentAction ? titleize(human.currentAction) : "None"}</p>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Needs</p>
-            <div className="mt-3"><HumanMetricRows values={human.needs} /></div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Emotions</p>
-            <div className="mt-3"><HumanMetricRows values={human.emotions} /></div>
-            <HumanEmotionExplainability human={human} />
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Relationship To Other</p>
-            <div className="mt-3 grid gap-2 text-xs text-stone-200">
-              <p>Trust {formatNumber(human.relationshipToOther?.trust ?? 0, 2)}</p>
-              <p>Attraction {formatNumber(human.relationshipToOther?.attraction ?? 0, 2)}</p>
-              <p>Affection {formatNumber(human.relationshipToOther?.affection ?? 0, 2)}</p>
-              <p>Companionship {formatNumber(human.relationshipToOther?.companionship ?? 0, 2)}</p>
-            </div>
-          </div>
-
-          <DetailCard label="Latest Memory" value={human.latestMemory ? `${human.latestMemory.eventType}: ${human.latestMemory.summary}` : "None"} />
-          <DetailCard label="Latest Causal Event" value={human.latestCausalEvent ? `${human.latestCausalEvent.title}: ${human.latestCausalEvent.summary}` : "None"} />
-        </div>
-      ) : (
-        <p className="mt-4 text-sm text-stone-400">No human selected.</p>
-      )}
-    </section>
-  );
-}
-function getHealthBadgeClass(badge: WorldHealthBadge): string {
-  if (badge === "Healthy") {
-    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
-  }
-
-  if (badge === "Warning") {
-    return "border-amber-300/40 bg-amber-300/10 text-amber-100";
-  }
-
-  return "border-red-400/40 bg-red-950/30 text-red-100";
-}
-
-function formatHealthList(values: readonly string[]): string {
-  return values.length > 0 ? values.join(", ") : "None";
-}
-
-function WorldHealthPanel({ health, loading, error }: { health: WorldHealthSummary | null; loading: boolean; error: string | null }) {
-  const badge = health?.badge ?? "Warning";
-
-  return (
-    <section data-testid="world-health-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">World Health</p>
-          <p className="mt-2 text-base text-stone-50">{health?.worldName ?? "Unavailable"}</p>
-        </div>
-        <span className={`inline-flex border px-2.5 py-1 text-xs font-semibold uppercase tracking-normal ${getHealthBadgeClass(badge)}`}>
-          {loading ? "Loading" : health?.badge ?? "Warning"}
-        </span>
-      </div>
-      {error ? <p className="mt-3 text-sm text-red-100">{error}</p> : null}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-        <DetailCard label="Status" value={health?.status ?? "-"} />
-        <DetailCard label="World.currentTick" value={health?.currentTick ?? "-"} />
-        <DetailCard label="Latest SimulationTick.tickNumber" value={health?.latestSimulationTickNumber ?? "-"} />
-        <DetailCard label="Last Tick" value={health?.lastTickStatus ?? "missing"} />
-        <DetailCard label="Last Successful Tick Time" value={health?.lastSuccessfulTickTime ?? "-"} />
-        <DetailCard label="Failed Systems" value={health ? formatHealthList(health.failedSystems) : "-"} />
-        <DetailCard label="Last Error" value={health?.lastErrorMessage ?? "-"} />
-        <DetailCard label="Biome Coverage" value={health ? formatPercent(health.biomeCoveragePercent) : "-"} />
-        <DetailCard label="Plant Coverage" value={health ? formatPercent(health.plantCoveragePercent) : "-"} />
-        <DetailCard label="Animal Species" value={health ? (health.animalDataAvailable ? formatNumber(health.animalSpeciesCount, 0) : "Not tracked yet") : "-"} />
-        <DetailCard label="Occupied Habitat" value={health ? (health.animalDataAvailable ? `${formatNumber(health.occupiedAnimalHabitatPercent, 2)} %` : "Not tracked yet") : "-"} />
-        <DetailCard label="Wildlife Population" value={health ? (health.animalDataAvailable ? formatNumber(health.totalWildlifePopulation, 0) : "Not tracked yet") : "-"} />
-        <DetailCard label="Animal Suitability" value={health ? (health.animalDataAvailable ? formatNumber(health.averageAnimalHabitatSuitability, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Animal Health" value={health ? (health.animalDataAvailable ? formatNumber(health.averageAnimalHealth, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Ecosystem Health" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.averageEcosystemHealth, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Biodiversity" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.averageBiodiversity, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Migration Activity" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.migrationActivity, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Food Stability" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.foodStability, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Predator Balance" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.predatorBalance, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Collapsed Habitats" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.collapsedHabitats, 0) : "Not tracked yet") : "-"} />
-        <DetailCard label="Population Growth" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.populationGrowthRate, 4) : "Not tracked yet") : "-"} />
-        <DetailCard label="Plant Consumption" value={health ? (health.ecosystemDataAvailable ? formatNumber(health.plantConsumptionRate, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Average Population Fitness" value={health ? (health.adaptationDataAvailable ? formatNumber(health.averageFitness, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Adaptation Diversity" value={health ? (health.adaptationDataAvailable ? formatNumber(health.averageAdaptationDiversity, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Average Climate Adaptation" value={health ? (health.adaptationDataAvailable ? formatNumber(health.averageClimateAdaptation, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Average Disease Resistance" value={health ? (health.adaptationDataAvailable ? formatNumber(health.averageDiseaseResistance, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Average Reproductive Efficiency" value={health ? (health.adaptationDataAvailable ? formatNumber(health.averageReproductiveEfficiency, 3) : "Not tracked yet") : "-"} />
-        <DetailCard label="Highest Fitness Population" value={health ? (health.adaptationDataAvailable ? (health.highestAdaptedPopulation ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Lowest Fitness Population" value={health ? (health.adaptationDataAvailable ? (health.lowestFitnessPopulation ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Weather Snapshot" value={health?.weatherSnapshotAvailable ? "Available" : "Missing"} />
-
-        {/* Human MVA Cards */}
-        <DetailCard label="Human System Status" value={health?.humanSystemStatus ?? (health?.humanDataAvailable ? "Active" : "Unavailable")} />
-        <DetailCard label="Human Population" value={health ? (health.humanDataAvailable ? String(health.humanPopulation ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Male Humans" value={health ? (health.humanDataAvailable ? String(health.maleHumans ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Female Humans" value={health ? (health.humanDataAvailable ? String(health.femaleHumans ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Adult Humans" value={health ? (health.humanDataAvailable ? String(health.adultHumans ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Children" value={health ? (health.humanDataAvailable ? String(health.childrenHumans ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Latest Human Action" value={health ? (health.humanDataAvailable ? (health.latestHumanAction ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Latest Human Causal Event" value={health ? (health.humanDataAvailable ? (health.latestHumanCausalEvent ?? "-") : "Not tracked yet") : "-"} />
-        <DetailCard label="Average Human Fear" value={health ? (health.humanDataAvailable && health.averageHumanFear != null ? formatNumber(health.averageHumanFear, 3) : (health?.humanDataAvailable ? "-" : "Not tracked yet")) : "-"} />
-        <DetailCard label="Average Human Curiosity" value={health ? (health.humanDataAvailable && health.averageHumanCuriosity != null ? formatNumber(health.averageHumanCuriosity, 3) : (health?.humanDataAvailable ? "-" : "Not tracked yet")) : "-"} />
-        <DetailCard label="Average Human Relationship Stability" value={health ? (health.humanDataAvailable && health.averageHumanRelationshipStability != null ? formatNumber(health.averageHumanRelationshipStability, 3) : (health?.humanDataAvailable ? "-" : "Not tracked yet")) : "-"} />
-      </div>
-    </section>
-  );
-}
-function FutureMetricRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-xs text-stone-300">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-right text-stone-100">{value}</span>
-    </div>
-  );
-}
-
-function LayerStatusCard({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "error" | "loading" }) {
-  const valueColor = tone === "error" ? "text-red-100" : tone === "loading" ? "text-amber-100" : "text-stone-100";
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">{label}</p>
-      <p className={`mt-3 text-sm ${valueColor}`}>{value}</p>
-    </div>
-  );
-}
-
-function BiomeEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-1 h-4 w-4 shrink-0 rounded-full border border-white/20" style={{ backgroundColor: metrics.biomeColor }} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Biome</p>
-          <p className="mt-2 text-base text-stone-50">{metrics.biomeName}</p>
-          <p className="mt-1 text-xs text-stone-400">{metrics.biomeCategory}{metrics.biomeCoverage ? ` / ${metrics.biomeCoverage}` : ""}</p>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-2">
-        <FutureMetricRow label={metrics.isCellScope ? "Habitability" : "Average habitability"} value={formatNumber(metrics.habitabilityScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Fertility" : "Average fertility"} value={formatNumber(metrics.fertilityScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Water availability" : "Average water availability"} value={formatNumber(metrics.waterAvailabilityScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Vegetation density" : "Average vegetation density"} value={formatNumber(metrics.vegetationDensity, 3)} />
-        <FutureMetricRow label="Tags" value={formatTagList(metrics.biomeTags)} />
-      </div>
-    </div>
-  );
-}
-
-function VegetationEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-1 h-4 w-4 shrink-0 rounded-full border border-white/20" style={{ backgroundColor: metrics.dominantPlantColor }} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Vegetation</p>
-          <p className="mt-2 text-base text-stone-50">{metrics.dominantPlantName}</p>
-          <p className="mt-1 text-xs text-stone-400">{metrics.dominantPlantCategory}{metrics.plantCoverage ? ` / ${metrics.plantCoverage}` : ""}</p>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-2">
-        <FutureMetricRow label={metrics.isCellScope ? "Suitability" : "Average suitability"} value={formatNumber(metrics.plantSuitabilityScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Density" : "Average density"} value={formatNumber(metrics.plantDensity, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Biomass" : "Average biomass"} value={formatNumber(metrics.biomassScore, 3)} />
-        <FutureMetricRow label="Edible score" value={formatNumber(metrics.ediblePlantScore, 3)} />
-        <FutureMetricRow label="Wood score" value={formatNumber(metrics.woodMaterialScore, 3)} />
-        <FutureMetricRow label="Medicinal score" value={formatNumber(metrics.medicinalPotentialScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Biodiversity" : "Average biodiversity"} value={formatNumber(metrics.biodiversityScore, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Regrowth" : "Average regrowth"} value={formatNumber(metrics.regrowthRate, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Seasonal stress" : "Average seasonal stress"} value={formatNumber(metrics.seasonalStressScore, 3)} />
-        <FutureMetricRow label="Tags" value={formatTagList(metrics.plantTags)} />
-      </div>
-    </div>
-  );
-}
-
-
-function HealthBar({ value }: { value: number }) {
-  const segments = Array.from({ length: 10 }, (_, index) => index < Math.round(clamp(value, 0, 1) * 10));
-
-  return <span className="font-mono text-xs text-stone-200">{segments.map((filled) => filled ? "#" : "-").join("")}</span>;
-}
-
-function statusTone(status: AtlasCell["ecosystemHealthStatus"]): string {
-  if (status === "Excellent" || status === "Healthy") {
-    return "border-emerald-300/40 bg-emerald-300/10 text-emerald-100";
-  }
-
-  if (status === "Stressed") {
-    return "border-amber-300/40 bg-amber-300/10 text-amber-100";
-  }
-
-  return "border-red-400/40 bg-red-950/30 text-red-100";
-}
-
-function ecosystemExplanation(metrics: FutureLayerMetrics): string {
-  if (metrics.ecosystemHealthStatus === "Collapsed") {
-    return "Food, water, or population balance can no longer support stable wildlife.";
-  }
-
-  if (metrics.foodStability < 0.38) {
-    return "Food availability is the main limiting factor for current populations.";
-  }
-
-  if (metrics.migrationActivity > 0.5) {
-    return "Migration pressure is actively redistributing populations into neighboring cells.";
-  }
-
-  if (metrics.plantConsumptionRate > 0.58) {
-    return "Grazing pressure is drawing down edible plant biomass.";
-  }
-
-  return "Biodiversity, food, and population balance are supporting a stable ecosystem.";
-}
-
-function AnimalEcologyCard({ metrics }: { metrics: FutureLayerMetrics }) {
-  const topPopulations = metrics.animalPopulations.filter((population) => population.population > 0).slice(0, 5);
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-1 h-4 w-4 shrink-0 rounded-full border border-white/20" style={{ backgroundColor: metrics.dominantAnimalGuildColor }} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Animals</p>
-          <p className="mt-2 text-base text-stone-50">{metrics.dominantSpeciesName}</p>
-          <p className="mt-1 text-xs text-stone-400">{metrics.dominantAnimalGuildName}{metrics.animalCoverage ? ` / ${metrics.animalCoverage}` : ""}</p>
-        </div>
-        <span className={`border px-2 py-1 text-[10px] font-semibold uppercase ${statusTone(metrics.ecosystemHealthStatus)}`}>{metrics.ecosystemHealthStatus}</span>
-      </div>
-      <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
-        <div className="flex items-center justify-between gap-3 text-xs"><span className="text-stone-500">Health</span><HealthBar value={metrics.ecosystemHealthScore} /></div>
-        <p className="mt-2 text-xs text-stone-300">{ecosystemExplanation(metrics)}</p>
-      </div>
-      <div className="mt-4 grid gap-2">
-        <FutureMetricRow label={metrics.isCellScope ? "Species present" : "Peak cell species"} value={formatNumber(metrics.speciesCount, 0)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Population" : "Total population"} value={formatNumber(metrics.totalWildlifePopulation, 0)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Suitability" : "Average suitability"} value={formatNumber(metrics.averageHabitatSuitability, 3)} />
-        <FutureMetricRow label={metrics.isCellScope ? "Health" : "Average health"} value={formatNumber(metrics.averagePopulationHealth, 3)} />
-        <FutureMetricRow label="Food availability" value={formatNumber(metrics.foodAvailability, 3)} />
-        <FutureMetricRow label="Food stability" value={formatNumber(metrics.foodStability, 3)} />
-        <FutureMetricRow label="Plant consumption" value={formatNumber(metrics.plantConsumptionRate, 3)} />
-        <FutureMetricRow label="Predation" value={formatNumber(metrics.predationPressure, 3)} />
-        <FutureMetricRow label="Carrying usage" value={formatNumber(metrics.carryingCapacityUsage, 3)} />
-        <FutureMetricRow label="Migration pressure" value={formatNumber(metrics.migrationPressure, 3)} />
-        <FutureMetricRow label="Migration activity" value={formatNumber(metrics.migrationActivity, 3)} />
-        <FutureMetricRow label="Growth trend" value={formatNumber(metrics.populationGrowthRate, 4)} />
-        <FutureMetricRow label="Tags" value={formatTagList(metrics.animalTags)} />
-        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Top Species</p>
-        {topPopulations.map((population) => (
-          <FutureMetricRow key={population.speciesId} label={population.speciesName} value={`${formatNumber(population.population, 0)} / fitness ${formatNumber(population.fitnessScore, 2)} / cold ${formatNumber(population.adaptationProfile.coldTolerance, 2)}`} />
-        ))}
-        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Recent History</p>
-        {metrics.ecosystemHistory.slice(0, 4).map((event, index) => (
-          <FutureMetricRow key={`${event.id}:${event.tick}:${index}`} label={`Tick ${event.tick}`} value={event.type} />
-        ))}
-        <p className="pt-2 text-[10px] uppercase tracking-[0.24em] text-stone-500">Influencing Systems</p>
-        <FutureMetricRow label="Climate" value={metrics.ecosystemHealthScore >= 0.62 ? "Temperature and season support growth." : "Climate stress reduced stability."} />
-        <FutureMetricRow label="Plants" value={metrics.plantConsumptionRate > 0.58 ? "Grazing reduced edible biomass." : "Plant biomass supports food supply."} />
-        <FutureMetricRow label="Weather" value={metrics.foodStability < 0.38 ? "Dry or seasonal stress reduced food." : "Water and regrowth remain adequate."} />
-        <FutureMetricRow label="Migration" value={metrics.migrationActivity > 0.5 ? "Moderate outward movement detected." : "Movement remains locally stable."} />
-      </div>
-    </div>
-  );
-}
-
-function FutureLayerStatePanel({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "error" | "loading" }) {
-  return (
-    <section data-testid="future-layers-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
-      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Future Layers</p>
-      <div className="mt-4 grid gap-3">
-        <LayerStatusCard label={label} value={value} tone={tone} />
-      </div>
-    </section>
-  );
-}
-
-export function FutureLayersPanel({
-  snapshot,
-  selectedCell,
-  loading,
-  error,
-}: {
-  snapshot: AtlasSnapshot;
-  selectedCell: AtlasCell | null;
-  loading: boolean;
-  error: string | null;
-}) {
-  if (loading) {
-    return <FutureLayerStatePanel label="Atlas Ecology" value="Loading selected world ecology..." tone="loading" />;
-  }
-
-  if (error) {
-    return <FutureLayerStatePanel label="Atlas Ecology Error" value={error} tone="error" />;
-  }
-
-  if (snapshot.cells.length === 0) {
-    return <FutureLayerStatePanel label="Atlas Ecology Empty" value="No atlas cells are available for this snapshot." />;
-  }
-
-  const metrics = getFutureLayerMetrics(snapshot, selectedCell);
-
-  return (
-    <section data-testid="future-layers-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Future Layers</p>
-          <p className="mt-2 text-sm text-stone-300">{metrics.scopeLabel}: <span className="text-stone-100">{metrics.scopeDescription}</span></p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3">
-        <BiomeEcologyCard metrics={metrics} />
-        <VegetationEcologyCard metrics={metrics} />
-        <AnimalEcologyCard metrics={metrics} />
-        <LayerStatusCard label="Civilizations" value="Civilization Systems Not Generated Yet" />
-      </div>
-    </section>
-  );
-}
-
-function getCellWarnings(cell: AtlasCell): string[] {
-  return [
-    cell.ecosystemHealthScore < 0.35 ? "Ecosystem health is unstable." : null,
-    cell.foodStability < 0.35 ? "Food stability is under stress." : null,
-    cell.stormPotential > 0.72 ? "Storm potential is elevated." : null,
-    cell.drynessIndex > 0.78 ? "Dryness index is elevated." : null,
-    cell.averageFitness < 0.32 && cell.totalWildlifePopulation > 0 ? "Population adaptation fitness is low." : null,
-  ].filter((warning): warning is string => Boolean(warning));
-}
-
 function IntegrityRow({ label, ok }: { label: string; ok: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm">
@@ -2118,342 +790,60 @@ function IntegrityRow({ label, ok }: { label: string; ok: boolean }) {
 function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.34em] text-amber-300/80">{eyebrow}</p>
-      <h1 className="mt-4 font-[family-name:var(--font-display)] text-5xl font-semibold uppercase leading-[0.9] text-stone-50 sm:text-6xl lg:text-7xl">{title}</h1>
-      <p className="mt-5 max-w-3xl font-[family-name:var(--font-display)] text-2xl leading-tight text-amber-200 sm:text-3xl">{description}</p>
+      <p className="text-[10px] uppercase tracking-[0.35em] text-amber-300/75">{eyebrow}</p>
+      <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-stone-50">{title}</h2>
+      <p className="mt-2 max-w-3xl text-sm text-stone-300">{description}</p>
     </div>
   );
 }
 
-type GlobePreviewPanelProps = {
-  descriptor: AtlasTextureDescriptor;
-  snapshot: AtlasSnapshot;
-  atlasTextureRef: React.RefObject<HTMLCanvasElement | null>;
-  selectedCellId: string | null;
-  rotationSpeed: number;
-  rotationPaused: boolean;
-  showClouds: boolean;
-  showAtmosphere: boolean;
-  showDayNight: boolean;
-  beautyQuality: AtlasBeautyQuality;
-  onSelectCell: (cell: AtlasCell) => void;
-  onHoverCell: (cellId: string | null, point?: { x: number; y: number }) => void;
-};
-
-function GlobePreviewPanel({
-  descriptor,
-  snapshot,
-  atlasTextureRef,
-  selectedCellId,
-  rotationSpeed,
-  rotationPaused,
-  showClouds,
-  showAtmosphere,
-  showDayNight,
-  beautyQuality,
-  onSelectCell,
-  onHoverCell,
-}: GlobePreviewPanelProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const rotationRef = useRef(0);
-  const dragRef = useRef<{ pointerId: number; x: number; rotation: number } | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ width: 920, height: 620 });
-  const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
-  const [textureReady, setTextureReady] = useState(false);
-
-  useEffect(() => {
-    const host = hostRef.current;
-
-    if (!host) {
-      return;
-    }
-
-    const updateSize = () => {
-      setCanvasSize({
-        width: Math.max(420, Math.floor(host.clientWidth || 920)),
-        height: Math.max(420, Math.floor(host.clientHeight || 620)),
-      });
-    };
-
-    updateSize();
-
-    if (typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(host);
-
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) {
-      return;
-    }
-
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      return;
-    }
-
-    canvas.width = canvasSize.width;
-    canvas.height = canvasSize.height;
-
-    let animationFrame = 0;
-    let previousTime = performance.now();
-    const draw = (time: number) => {
-      const deltaSeconds = Math.min(0.08, Math.max(0, (time - previousTime) / 1000));
-      previousTime = time;
-
-      if (!rotationPaused && !dragRef.current) {
-        rotationRef.current = (rotationRef.current + rotationSpeed * deltaSeconds * 18) % 360;
-      }
-
-      const atlasTexture = atlasTextureRef.current;
-
-      if (!atlasTexture) {
-        context.clearRect(0, 0, canvasSize.width, canvasSize.height);
-        setTextureReady(false);
-        animationFrame = window.requestAnimationFrame(draw);
-        return;
-      }
-
-      setTextureReady(true);
-      renderAtlasGlobe(context, snapshot, descriptor, atlasTexture, {
-        width: canvasSize.width,
-        height: canvasSize.height,
-        rotationLongitudeDegrees: rotationRef.current,
-        tiltDegrees: snapshot.astronomy.solarDeclinationDegrees * 0.28,
-        showClouds,
-        showAtmosphere,
-        showDayNight,
-        selectedCellId,
-        hoveredCellId,
-        quality: beautyQuality,
-      });
-
-      animationFrame = window.requestAnimationFrame(draw);
-    };
-
-    animationFrame = window.requestAnimationFrame(draw);
-
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [atlasTextureRef, beautyQuality, canvasSize.height, canvasSize.width, descriptor, hoveredCellId, rotationPaused, rotationSpeed, selectedCellId, showAtmosphere, showClouds, showDayNight, snapshot]);
-
-  const pickCell = (event: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) {
-      return null;
-    }
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvasSize.width / Math.max(1, rect.width);
-    const scaleY = canvasSize.height / Math.max(1, rect.height);
-
-    return pickAtlasGlobeCell(
-      snapshot,
-      {
-        x: (event.clientX - rect.left) * scaleX,
-        y: (event.clientY - rect.top) * scaleY,
-      },
-      canvasSize,
-      {
-        rotationLongitudeDegrees: rotationRef.current,
-        tiltDegrees: snapshot.astronomy.solarDeclinationDegrees * 0.28,
-      },
-    );
-  };
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current;
-
-    if (drag && drag.pointerId === event.pointerId) {
-      rotationRef.current = drag.rotation - (event.clientX - drag.x) * 0.32;
-      return;
-    }
-
-    const pick = pickCell(event);
-    setHoveredCellId(pick?.cellId ?? null);
-    onHoverCell(pick?.cellId ?? null, pick ? { x: event.clientX, y: event.clientY } : undefined);
-  };
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    dragRef.current = { pointerId: event.pointerId, x: event.clientX, rotation: rotationRef.current };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current;
-    const wasClick = drag ? Math.abs(event.clientX - drag.x) < 4 : true;
-    dragRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-
-    if (!wasClick) {
-      return;
-    }
-
-    const pick = pickCell(event);
-    const cell = pick ? snapshot.cells.find((candidate) => candidate.id === pick.cellId) ?? null : null;
-
-    if (cell) {
-      onSelectCell(cell);
-    }
-  };
-
-  const handlePointerLeave = () => {
-    dragRef.current = null;
-    setHoveredCellId(null);
-    onHoverCell(null);
-  };
-
-  return (
-    <div ref={hostRef} data-testid="globe-preview" className="relative h-[620px] min-h-[420px] overflow-hidden rounded-[1.75rem] border border-white/10 bg-[radial-gradient(circle_at_50%_45%,rgba(49,134,155,0.22),transparent_34%),linear-gradient(180deg,#071017,#030609)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]">
-      <canvas
-        ref={canvasRef}
-        aria-label="Rotating Developer Atlas globe"
-        className="h-full w-full cursor-grab active:cursor-grabbing"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-      />
-      {!textureReady ? (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-stone-400">Preparing atlas texture</div>
-      ) : null}
-      <div className="pointer-events-none absolute inset-x-5 top-5 flex flex-wrap items-center justify-between gap-3 text-xs text-stone-400">
-        <span className="rounded-full border border-cyan-200/15 bg-cyan-200/8 px-3 py-1 text-cyan-100">Globe Mode</span>
-        <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1">Texture {descriptor.width} x {descriptor.height}</span>
-      </div>
-      <div className="pointer-events-none absolute bottom-5 left-5 right-5 grid gap-3 rounded-2xl border border-white/10 bg-black/35 p-4 backdrop-blur sm:grid-cols-3">
-        <DetailCard label="Picking" value="Hover/click maps to atlas cells" />
-        <DetailCard label="Grid" value={`${descriptor.latitudeDivisions} x ${descriptor.longitudeDivisions}`} />
-        <DetailCard label="Hovered" value={hoveredCellId ?? "-"} />
-      </div>
-    </div>
-  );
-}
 export function WorldMapAtlasClient({
   worlds,
   initialSnapshot,
-  initialHealth = null,
   fetchSnapshot = fetchAtlasSnapshotFromApi,
-  fetchHealth = fetchWorldHealthFromApi,
 }: WorldMapAtlasClientProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [selectedLayerId, setSelectedLayerId] = useState<LayerId>("planet");
-  const [viewMode, setViewMode] = useState<AtlasViewMode>("developerAtlas");
-  const [visualMode, setVisualMode] = useState<AtlasVisualMode>("hybrid");
-  const [beautyQuality, setBeautyQuality] = useState<AtlasBeautyQuality>("balanced");
-  const [cloudsEnabled, setCloudsEnabled] = useState(true);
-  const [cloudOpacity, setCloudOpacity] = useState(0.26);
-  const [atmosphereEnabled, setAtmosphereEnabled] = useState(true);
-  const [dayNightEnabled, setDayNightEnabled] = useState(true);
-  const [globeRotationSpeed, setGlobeRotationSpeed] = useState(0.28);
-  const [isGlobeRotationPaused, setIsGlobeRotationPaused] = useState(false);
-  const [gridOpacity, setGridOpacity] = useState(0.18);
-  const [isRunning, setIsRunning] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showHumansOverlay, setShowHumansOverlay] = useState(true);
-  const [selectedHumanId, setSelectedHumanId] = useState<string | null>(initialSnapshot.humans.agents[0]?.id ?? null);
   const [selectedWorldId, setSelectedWorldId] = useState(initialSnapshot.worldId);
-  const [draftDay, setDraftDay] = useState(initialSnapshot.selectedDay);
-  const [committedDay, setCommittedDay] = useState(initialSnapshot.selectedDay);
-  const [selectedCellId, setSelectedCellId] = useState<string | null>(() => readInitialSelectedCellId(initialSnapshot));
+  const [requestedDay, setRequestedDay] = useState(initialSnapshot.selectedDay);
+  const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [hoverState, setHoverState] = useState<HoverState | null>(null);
   const [overlays, setOverlays] = useState(DEFAULT_OVERLAYS);
+  const [autoOverlayMask, setAutoOverlayMask] = useState<Record<OverlayId, boolean>>({
+    latitudeBands: true,
+    windArrows: true,
+    watershedBoundaries: true,
+    coastlines: true,
+    gridLines: true,
+    cellIds: true,
+    neighborLinks: true,
+    drainageArrows: true,
+    pressureBands: true,
+    mountainOutlines: true,
+  });
   const [canvasSize, setCanvasSize] = useState({ width: 1120, height: 680 });
   const [view, setView] = useState(() => createFitView(initialSnapshot, 1120, 680));
   const [error, setError] = useState<string | null>(null);
-  const [health, setHealth] = useState<WorldHealthSummary | null>(initialHealth);
-  const [healthError, setHealthError] = useState<string | null>(null);
-  const [isHealthLoading, setIsHealthLoading] = useState(false);
-  const [isAtlasLoading, setIsAtlasLoading] = useState(false);
   const [showLegend, setShowLegend] = useState(true);
   const [legendPinned, setLegendPinned] = useState(false);
   const [legendOpacity, setLegendOpacity] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchHistory, setSearchHistory] = useState<Array<{ q: string; pinned?: boolean; at: number }>>(() => readSearchHistory());
+  const [searchHistory, setSearchHistory] = useState<Array<{ q: string; pinned?: boolean; at: number }>>([]);
   const [isPending, startTransition] = useTransition();
+  const deferredRequestedDay = useDeferredValue(requestedDay);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  const lastHoveredCellIdRef = useRef<string | null>(null);
   const cellByIdRef = useRef(new Map<string, AtlasCell>());
   const cellByGridKeyRef = useRef(new Map<string, AtlasCell>());
   const baseLayerBufferRef = useRef<HTMLCanvasElement | null>(null);
   const baseLayerCacheKeyRef = useRef<string>("");
   const continentCacheRef = useRef<{ land?: { id: number; center: { row: number; column: number }; size: number }; ocean?: { id: number; center: { row: number; column: number }; size: number } } | null>(null);
-  const hasMountedHealthRef = useRef(false);
 
   const selectedWorld = worlds.find((world) => world.id === selectedWorldId) ?? worlds[0];
-  const snapshotCellById = useMemo(() => new Map(snapshot.cells.map((cell) => [cell.id, cell])), [snapshot]);
-  const selectedCell = selectedCellId ? snapshotCellById.get(selectedCellId) ?? null : null;
-  const hoveredCell = hoverState ? snapshotCellById.get(hoverState.cellId) ?? null : null;
-  const humansByCell = useMemo(() => getHumansByCell(snapshot.humans.agents), [snapshot.humans.agents]);
-  const settlementsByCell = useMemo(() => getSettlementsByCell(snapshot.settlements.settlements), [snapshot.settlements.settlements]);
-  const selectedHuman = selectedHumanId ? snapshot.humans.agents.find((human) => human.id === selectedHumanId) ?? null : null;
-  const autoOverlayMask = useMemo(() => createAutoOverlayMask(snapshot.grid.totalCells, view.scale), [snapshot.grid.totalCells, view.scale]);
-  const activeVisualMode = VISUAL_MODE_OPTIONS.find((mode) => mode.id === visualMode) ?? VISUAL_MODE_OPTIONS[0];
-  const activeViewMode = VIEW_MODE_OPTIONS.find((mode) => mode.id === viewMode) ?? VIEW_MODE_OPTIONS[0];
-  const atlasTextureDescriptor = useMemo(() => prepareAtlasTextureDescriptor(snapshot, MAP_CELL_SIZE), [snapshot]);
-  const effectiveBeautyQuality: AtlasBeautyQuality = visualMode === "simulationGrid" ? "off" : beautyQuality;
-  const commitDraftDay = (day: number) => {
-    const clampedDay = clamp(Math.round(day), 1, selectedWorld.yearLengthDays);
-    setDraftDay(clampedDay);
-    setCommittedDay(clampedDay);
-  };
-  const persistSelectedCell = (cellId: string | null) => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const query = new URLSearchParams(window.location.search);
-
-    if (cellId) {
-      query.set("cell", cellId);
-      window.sessionStorage.setItem(SELECTED_CELL_STORAGE_KEY, JSON.stringify({
-        worldId: snapshot.worldId,
-        day: snapshot.selectedDay,
-        cellId,
-      }));
-    } else {
-      query.delete("cell");
-      window.sessionStorage.removeItem(SELECTED_CELL_STORAGE_KEY);
-    }
-
-    const nextUrl = `${window.location.pathname}?${query.toString()}`;
-    window.history.replaceState(window.history.state, "", nextUrl);
-  };
-
-  const selectInspectorCell = (cell: AtlasCell) => {
-    setSelectedCellId(cell.id);
-    persistSelectedCell(cell.id);
-  };
-  const clearInspectorCell = () => {
-    setSelectedCellId(null);
-    persistSelectedCell(null);
-  };
-
-  const selectHuman = (human: AtlasHumanAgentView) => {
-    setSelectedHumanId(human.id);
-    const cell = snapshotCellById.get(human.currentCellId);
-
-    if (cell) {
-      selectInspectorCell(cell);
-    }
-  };
-
-  const applyCanvasSize = useEffectEvent((nextCanvasSize: { width: number; height: number }) => {
-    setCanvasSize(nextCanvasSize);
-    setView(createFitView(snapshot, nextCanvasSize.width, nextCanvasSize.height));
-  });
+  const selectedCell = selectedCellId ? cellByIdRef.current.get(selectedCellId) ?? null : null;
+  const hoveredCell = hoverState ? cellByIdRef.current.get(hoverState.cellId) ?? null : null;
 
   useEffect(() => {
     cellByIdRef.current = new Map(snapshot.cells.map((cell) => [cell.id, cell]));
@@ -2462,12 +852,18 @@ export function WorldMapAtlasClient({
   }, [snapshot]);
 
   useEffect(() => {
-    syncAtlasLocation(snapshot, selectedCell?.id ?? null);
-
-    if (selectedCellId && !selectedCell && typeof window !== "undefined") {
-      window.sessionStorage.removeItem(SELECTED_CELL_STORAGE_KEY);
+    if (!selectedCellId) {
+      return;
     }
-  }, [selectedCell, selectedCellId, snapshot]);
+
+    if (!cellByIdRef.current.has(selectedCellId)) {
+      setSelectedCellId(null);
+    }
+  }, [selectedCellId, snapshot]);
+
+  useEffect(() => {
+    setView(createFitView(snapshot, canvasSize.width, canvasSize.height));
+  }, [canvasSize.height, canvasSize.width, snapshot.grid.latitudeDivisions, snapshot.grid.longitudeDivisions, snapshot.worldId]);
 
   useEffect(() => {
     const host = canvasHostRef.current;
@@ -2477,11 +873,8 @@ export function WorldMapAtlasClient({
     }
 
     if (typeof ResizeObserver === "undefined") {
-      const timeoutId = window.setTimeout(() => {
-        applyCanvasSize({ width: host.clientWidth || 1120, height: host.clientHeight || 680 });
-      }, 0);
-
-      return () => window.clearTimeout(timeoutId);
+      setCanvasSize({ width: host.clientWidth || 1120, height: host.clientHeight || 680 });
+      return;
     }
 
     const observer = new ResizeObserver((entries) => {
@@ -2491,7 +884,7 @@ export function WorldMapAtlasClient({
         return;
       }
 
-      applyCanvasSize({
+      setCanvasSize({
         width: Math.max(480, Math.floor(entry.contentRect.width)),
         height: Math.max(360, Math.floor(entry.contentRect.height)),
       });
@@ -2534,79 +927,90 @@ export function WorldMapAtlasClient({
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // Auto overlay scaling based on zoom and world size
+  useEffect(() => {
+    const total = snapshot.grid.totalCells;
+    const scale = view.scale;
+    const far = scale < 0.6;
+    const medium = scale >= 0.6 && scale <= 1.2;
+    const close = scale > 1.2;
+
+    const mask: Record<OverlayId, boolean> = { ...autoOverlayMask };
+
+    // Defaults
+    mask.gridLines = close;
+    mask.cellIds = close && total <= 64 * 128; // hide IDs on larger worlds
+    mask.neighborLinks = close && total <= 64 * 128;
+    mask.drainageArrows = close && total <= 256 * 512;
+    mask.windArrows = medium || close;
+    mask.pressureBands = medium || close;
+    mask.watershedBoundaries = medium || close;
+    mask.coastlines = medium || close;
+    mask.latitudeBands = !close; // helpful when zoomed out
+    mask.mountainOutlines = medium || close;
+
+    // Very large worlds
+    if (total >= 256 * 512) {
+      mask.cellIds = false;
+      mask.neighborLinks = false;
+    }
+    if (total >= 1024 * 2048) {
+      // keep only minimal overlays even at close zoom
+      mask.gridLines = false;
+      mask.drainageArrows = false;
+      mask.windArrows = medium || close;
+    }
+
+    // Far zoom: reduce to essentials
+    if (far) {
+      mask.windArrows = false;
+      mask.watershedBoundaries = false;
+      mask.pressureBands = false;
+      mask.coastlines = true; // coastlines are useful outline
+      mask.mountainOutlines = false;
+      mask.gridLines = false;
+      mask.cellIds = false;
+      mask.neighborLinks = false;
+      mask.drainageArrows = false;
+    }
+
+    setAutoOverlayMask(mask);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot.grid.totalCells, view.scale]);
+
   const loadSnapshot = useEffectEvent(async (worldId: string, day: number) => {
     try {
       setError(null);
-      setIsAtlasLoading(true);
       const nextSnapshot = await fetchSnapshot(worldId, day);
       setSnapshot(nextSnapshot);
       setSelectedWorldId(nextSnapshot.worldId);
-      setDraftDay(nextSnapshot.selectedDay);
-      setCommittedDay(nextSnapshot.selectedDay);
-      setView(createFitView(nextSnapshot, canvasSize.width, canvasSize.height));
-      clearInspectorCell();
+      setRequestedDay(nextSnapshot.selectedDay);
+      setSelectedCellId(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load atlas snapshot.");
-    } finally {
-      setIsAtlasLoading(false);
     }
   });
-  useEffect(() => {
-    if (!isRunning) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      const nextDay = draftDay >= selectedWorld.yearLengthDays ? 1 : draftDay + 1;
-      setDraftDay(nextDay);
-      setCommittedDay(nextDay);
-    }, 1600);
-
-    return () => window.clearInterval(intervalId);
-  }, [draftDay, isRunning, selectedWorld.yearLengthDays]);
 
   useEffect(() => {
-    if (selectedWorldId === snapshot.worldId && committedDay === snapshot.selectedDay) {
+    if (selectedWorldId === snapshot.worldId && deferredRequestedDay === snapshot.selectedDay) {
       return;
     }
 
     startTransition(() => {
-      void loadSnapshot(selectedWorldId, committedDay);
+      void loadSnapshot(selectedWorldId, deferredRequestedDay);
     });
-  }, [committedDay, selectedWorldId, snapshot.selectedDay, snapshot.worldId]);
+  }, [deferredRequestedDay, loadSnapshot, selectedWorldId, snapshot.selectedDay, snapshot.worldId]);
 
   useEffect(() => {
-    if (!hasMountedHealthRef.current) {
-      hasMountedHealthRef.current = true;
-      return;
+    const query = new URLSearchParams(window.location.search);
+    query.set("world", snapshot.worldId);
+    query.set("day", String(snapshot.selectedDay));
+    const nextUrl = `${window.location.pathname}?${query.toString()}`;
+
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
     }
-
-    let cancelled = false;
-    setHealthError(null);
-    setIsHealthLoading(true);
-
-    void fetchHealth(selectedWorldId)
-      .then((nextHealth) => {
-        if (!cancelled) {
-          setHealth(nextHealth);
-        }
-      })
-      .catch((loadError) => {
-        if (!cancelled) {
-          setHealthError(loadError instanceof Error ? loadError.message : "Unable to load world health.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsHealthLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchHealth, selectedWorldId]);
-
+  }, [snapshot.selectedDay, snapshot.worldId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2643,19 +1047,7 @@ export function WorldMapAtlasClient({
       }
     }
 
-    renderAtlasBeautyEffects(context, snapshot, {
-      x: mapOrigin.x,
-      y: mapOrigin.y,
-      cellSize: MAP_CELL_SIZE,
-      scale: view.scale,
-      quality: effectiveBeautyQuality,
-      cloudsEnabled,
-      cloudOpacity,
-      atmosphereEnabled,
-      dayNightEnabled,
-    });
-
-      const isOverlayVisible = (key: OverlayId) => overlays[key] && autoOverlayMask[key];
+    const isOverlayVisible = (key: OverlayId) => overlays[key] && autoOverlayMask[key];
 
     if (isOverlayVisible("pressureBands")) {
       for (const cell of snapshot.cells) {
@@ -2719,14 +1111,11 @@ export function WorldMapAtlasClient({
       }
     }
 
-    const shouldDrawGrid = visualMode === "simulationGrid" || (visualMode === "hybrid" && gridOpacity > 0) || isOverlayVisible("gridLines");
-
-    if (shouldDrawGrid) {
+    if (isOverlayVisible("gridLines")) {
       const topLeft = transform.worldToScreen(0, 0);
       const bottomRight = transform.worldToScreen(snapshot.grid.longitudeDivisions, snapshot.grid.latitudeDivisions);
-      const resolvedGridOpacity = visualMode === "simulationGrid" ? Math.max(gridOpacity, 0.55) : visualMode === "hybrid" ? gridOpacity * 0.7 : gridOpacity;
-      context.strokeStyle = `rgba(210,238,255,${clamp(resolvedGridOpacity, 0, 0.86)})`;
-      context.lineWidth = visualMode === "simulationGrid" ? 1.2 : 1;
+      context.strokeStyle = "rgba(255,255,255,0.12)";
+      context.lineWidth = 1;
 
       for (let column = 0; column <= snapshot.grid.longitudeDivisions; column += 1) {
         const x = transform.worldToScreen(column, 0).x;
@@ -2814,33 +1203,6 @@ export function WorldMapAtlasClient({
       }
     }
 
-    if (isOverlayVisible("animalMovementVectors") || selectedLayerId === "ecosystemMigration") {
-      context.strokeStyle = "rgba(255, 198, 96, 0.76)";
-      context.fillStyle = "rgba(255, 198, 96, 0.76)";
-      context.lineWidth = 1;
-
-      for (const cell of snapshot.cells) {
-        const from = transform.cellRect(cell);
-
-        for (const vector of cell.movementVectors.filter((entry) => entry.fromCellId === cell.id).slice(0, 3)) {
-          const target = cellByIdRef.current.get(vector.toCellId);
-
-          if (!target) {
-            continue;
-          }
-
-          const to = transform.cellRect(target);
-          drawArrow(
-            context,
-            from.x + from.width / 2,
-            from.y + from.height / 2,
-            to.x + to.width / 2,
-            to.y + to.height / 2,
-          );
-        }
-      }
-    }
-
     if (selectedCell && isOverlayVisible("neighborLinks")) {
       const rect = transform.cellRect(selectedCell);
       context.strokeStyle = "rgba(255, 209, 112, 0.95)";
@@ -2861,19 +1223,13 @@ export function WorldMapAtlasClient({
       }
     }
 
-    if (isOverlayVisible("cellIds") || visualMode === "simulationGrid") {
+    if (isOverlayVisible("cellIds")) {
       context.fillStyle = "rgba(255,255,255,0.8)";
       context.font = `${Math.max(7, 8 * view.scale)}px var(--font-sans)`;
 
       for (const cell of snapshot.cells) {
         const rect = transform.cellRect(cell);
         context.fillText(cell.id.replace("cell-", ""), rect.x + 2 * view.scale, rect.y + 10 * view.scale);
-      }
-    }
-
-    if (showHumansOverlay) {
-      for (const point of getHumanMarkerPoints(snapshot, transform, cellByIdRef.current)) {
-        drawHumanMarker(context, point, point.human.id === selectedHumanId);
       }
     }
 
@@ -2890,11 +1246,11 @@ export function WorldMapAtlasClient({
       context.lineWidth = 1.8;
       context.strokeRect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
     }
-  }, [atmosphereEnabled, autoOverlayMask, canvasSize.height, canvasSize.width, cloudOpacity, cloudsEnabled, dayNightEnabled, effectiveBeautyQuality, gridOpacity, hoveredCell, overlays, selectedCell, selectedHumanId, selectedLayerId, showHumansOverlay, snapshot, view, visualMode]);
+  }, [autoOverlayMask, canvasSize.height, canvasSize.width, hoveredCell, overlays, selectedCell, selectedLayerId, snapshot, view]);
 
   // Build base layer buffer when snapshot or layer changes
   useEffect(() => {
-    const key = `${snapshot.worldId}:${snapshot.selectedDay}:${selectedLayerId}:${visualMode}:${effectiveBeautyQuality}:${snapshot.grid.latitudeDivisions}x${snapshot.grid.longitudeDivisions}`;
+    const key = `${snapshot.worldId}:${snapshot.selectedDay}:${selectedLayerId}:${snapshot.grid.latitudeDivisions}x${snapshot.grid.longitudeDivisions}`;
     if (baseLayerCacheKeyRef.current === key && baseLayerBufferRef.current) {
       return;
     }
@@ -2907,16 +1263,16 @@ export function WorldMapAtlasClient({
     if (!ctx) {
       return;
     }
-    renderAtlasBaseLayer(ctx, snapshot, {
-      visualMode,
-      selectedLayerId,
-      cellSize: MAP_CELL_SIZE,
-      quality: effectiveBeautyQuality,
-      getLayerColor: (cell) => getLayerColor(snapshot, cell, selectedLayerId),
-    });
+    const transform = createAtlasCoordinateTransform(snapshot, { scale: 1, offsetX: 0, offsetY: 0 });
+
+    for (const cell of snapshot.cells) {
+      const rect = transform.cellRect(cell);
+      ctx.fillStyle = getLayerColor(snapshot, cell, selectedLayerId);
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    }
     baseLayerBufferRef.current = buffer;
     baseLayerCacheKeyRef.current = key;
-  }, [effectiveBeautyQuality, selectedLayerId, snapshot, visualMode]);
+  }, [selectedLayerId, snapshot]);
 
   const onLayerSelect = (layerId: LayerId) => {
     if (getLayerDefinition(layerId).disabled) {
@@ -2934,7 +1290,7 @@ export function WorldMapAtlasClient({
   const resetView = () => setView(createFitView(snapshot, canvasSize.width, canvasSize.height));
 
   const focusCell = (cell: AtlasCell, scale = DEFAULT_CELL_FOCUS_SCALE) => {
-    selectInspectorCell(cell);
+    setSelectedCellId(cell.id);
     const worldTransform = createAtlasCoordinateTransform(snapshot, { scale: 1, offsetX: 0, offsetY: 0 });
     const rect = worldTransform.cellRect(cell);
     const centerX = rect.x + rect.width / 2;
@@ -2945,15 +1301,6 @@ export function WorldMapAtlasClient({
       offsetX: canvasSize.width / 2 - centerX * nextScale,
       offsetY: canvasSize.height / 2 - centerY * nextScale,
     });
-  };
-
-  const focusHuman = (human: AtlasHumanAgentView) => {
-    const cell = snapshotCellById.get(human.currentCellId);
-
-    if (cell) {
-      setSelectedHumanId(human.id);
-      focusCell(cell);
-    }
   };
 
   const centerOnLatitude = (latitude: number) => {
@@ -3058,6 +1405,13 @@ export function WorldMapAtlasClient({
   };
 
   // Search parsing and history
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("atlasSearchHistory");
+      if (raw) setSearchHistory(JSON.parse(raw));
+    } catch {}
+  }, []);
+
   const saveSearch = (q: string, pinned?: boolean) => {
     setSearchHistory((current) => {
       const next = [{ q, pinned, at: Date.now() }, ...current.filter((h) => h.q !== q)].slice(0, 10);
@@ -3094,7 +1448,7 @@ export function WorldMapAtlasClient({
     if (keyword === "north pole") { centerOnLatitude(89.9); saveSearch(q); setShowSearch(false); return; }
     if (keyword === "south pole") { centerOnLatitude(-89.9); saveSearch(q); setShowSearch(false); return; }
 
-    const latOnly = q.match(/^(-?\d{1,2})(?:\s*(?:deg|degree|degrees))?\s*([ns])?$/i);
+    const latOnly = q.match(/^(-?\d{1,2})(?:\s*[Â°deg])?\s*([ns])?$/i);
     if (latOnly) {
       const v = Number(latOnly[1]);
       const hemi = latOnly[2]?.toLowerCase();
@@ -3106,7 +1460,7 @@ export function WorldMapAtlasClient({
     }
 
     // Coordinates
-    const coordMatch = q.match(/^\s*([+-]?\d{1,2})(?:\s*(?:deg|degree|degrees))?\s*([ns])?\s*,\s*([+-]?\d{1,3})(?:\s*(?:deg|degree|degrees))?\s*([ew])?\s*$/i);
+    const coordMatch = q.match(/^\s*([+-]?\d{1,2})(?:\s*[Â°]?)\s*([ns])?\s*,\s*([+-]?\d{1,3})(?:\s*[Â°]?)\s*([ew])?\s*$/i);
     if (coordMatch) {
       const latNum = Number(coordMatch[1]);
       const latH = coordMatch[2]?.toLowerCase();
@@ -3136,26 +1490,25 @@ export function WorldMapAtlasClient({
   };
 
   // Keyboard shortcuts
-  const handleKeyboardShortcut = useEffectEvent((e: KeyboardEvent) => {
-    if (e.target && (e.target as HTMLElement).tagName === "INPUT") return;
-    const k = e.key.toLowerCase();
-    if (k === "f") { e.preventDefault(); setShowSearch((v) => !v); return; }
-    if (k === "l") { e.preventDefault(); setShowLegend((v) => !v); return; }
-    if (k === "o") { e.preventDefault(); onToggleOverlay("windArrows"); return; }
-    if (k === "g") { e.preventDefault(); onToggleOverlay("gridLines"); return; }
-    if (k === "w") { e.preventDefault(); onToggleOverlay("windArrows"); return; }
-    if (k === "t") { e.preventDefault(); setSelectedLayerId("terrain"); return; }
-    if (k === "c") { e.preventDefault(); setSelectedLayerId("climate"); return; }
-    if (k === "h") { e.preventDefault(); setSelectedLayerId("hydrology"); return; }
-    if (k === "a") { e.preventDefault(); setSelectedLayerId("atmosphere"); return; }
-    if (k === "e") { e.preventDefault(); setSelectedLayerId("weather"); return; }
-    if (e.code === "Space") { e.preventDefault(); resetView(); return; }
-    if (e.key === "Escape") { clearInspectorCell(); setShowSearch(false); return; }
-  });
-
   useEffect(() => {
-    window.addEventListener("keydown", handleKeyboardShortcut);
-    return () => window.removeEventListener("keydown", handleKeyboardShortcut);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target && (e.target as HTMLElement).tagName === "INPUT") return;
+      const k = e.key.toLowerCase();
+      if (k === "f") { e.preventDefault(); setShowSearch((v) => !v); return; }
+      if (k === "l") { e.preventDefault(); setShowLegend((v) => !v); return; }
+      if (k === "o") { e.preventDefault(); onToggleOverlay("windArrows"); return; }
+      if (k === "g") { e.preventDefault(); onToggleOverlay("gridLines"); return; }
+      if (k === "w") { e.preventDefault(); onToggleOverlay("windArrows"); return; }
+      if (k === "t") { e.preventDefault(); setSelectedLayerId("terrain"); return; }
+      if (k === "c") { e.preventDefault(); setSelectedLayerId("climate"); return; }
+      if (k === "h") { e.preventDefault(); setSelectedLayerId("hydrology"); return; }
+      if (k === "a") { e.preventDefault(); setSelectedLayerId("atmosphere"); return; }
+      if (k === "e") { e.preventDefault(); setSelectedLayerId("weather"); return; }
+      if (e.code === "Space") { e.preventDefault(); resetView(); return; }
+      if (e.key === "Escape") { setSelectedCellId(null); setShowSearch(false); return; }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const getCellAtClientPosition = (clientX: number, clientY: number): AtlasCell | null => {
@@ -3185,7 +1538,6 @@ export function WorldMapAtlasClient({
     const cell = getCellAtClientPosition(event.clientX, event.clientY);
 
     if (cell) {
-      lastHoveredCellIdRef.current = cell.id;
       setHoverState({ cellId: cell.id, x: event.clientX, y: event.clientY });
     } else {
       setHoverState(null);
@@ -3205,10 +1557,10 @@ export function WorldMapAtlasClient({
 
   const onCanvasPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragStateRef.current;
-    const cell = getCellAtClientPosition(event.clientX, event.clientY) ?? (lastHoveredCellIdRef.current ? snapshotCellById.get(lastHoveredCellIdRef.current) ?? null : null);
+    const cell = getCellAtClientPosition(event.clientX, event.clientY);
 
     if (drag && Math.abs(event.clientX - drag.x) < 2 && Math.abs(event.clientY - drag.y) < 2 && cell) {
-      selectInspectorCell(cell);
+      setSelectedCellId(cell.id);
     }
 
     dragStateRef.current = null;
@@ -3216,29 +1568,10 @@ export function WorldMapAtlasClient({
   };
 
   const onCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-
-    if (canvas && showHumansOverlay) {
-      const rect = canvas.getBoundingClientRect();
-      const transform = createAtlasCoordinateTransform(snapshot, view);
-      const human = findHumanMarkerAt(
-        snapshot,
-        transform,
-        cellByIdRef.current,
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-      );
-
-      if (human) {
-        selectHuman(human);
-        return;
-      }
-    }
-
-    const cell = getCellAtClientPosition(event.clientX, event.clientY) ?? (lastHoveredCellIdRef.current ? snapshotCellById.get(lastHoveredCellIdRef.current) ?? null : null);
+    const cell = getCellAtClientPosition(event.clientX, event.clientY);
 
     if (cell) {
-      selectInspectorCell(cell);
+      setSelectedCellId(cell.id);
     }
   };
 
@@ -3248,90 +1581,26 @@ export function WorldMapAtlasClient({
   };
 
   const selectedLayer = getLayerDefinition(selectedLayerId);
-  const tooltipCell = hoveredCell ?? selectedCell;
-  const tooltipSummary = tooltipCell ? getTooltipSummary(tooltipCell) : null;
+  const tooltipSummary = hoveredCell ? getTooltipSummary(hoveredCell) : null;
   const activeStatistics = getLayerStatistics(snapshot, selectedLayerId);
   const legendItems = getLegendItems(snapshot, selectedLayerId);
-  const inspectorCell = selectedCell;
-  const systemSignals = [
-    snapshot.integrity.terrainValidated,
-    snapshot.integrity.climateValidated,
-    snapshot.integrity.hydrologyValidated,
-    snapshot.integrity.atmosphereValidated,
-    snapshot.integrity.weatherValidated,
-  ];
-  const activeSystemCount = systemSignals.filter(Boolean).length;
-  const formatObservatorySignal = (value: string | number | null | undefined) => {
-    if (value === null || value === undefined) {
-      return "Pending signal";
-    }
-
-    const text = String(value).trim();
-    return text.length > 0 ? text : "Pending signal";
-  };
-  const observatorySignals = [
-    {
-      label: "World Seed",
-      value: formatObservatorySignal(snapshot.fingerprint.seed),
-    },
-    {
-      label: "Total Cells",
-      value: snapshot.grid.totalCells > 0
-        ? `${formatNumber(snapshot.grid.totalCells, 0)} cells`
-        : "Pending signal",
-    },
-    {
-      label: "Active Systems",
-      value: `${activeSystemCount} / ${systemSignals.length} validated`,
-    },
-    {
-      label: "Current Tick",
-      value: formatObservatorySignal(health?.currentTick ?? snapshot.tick),
-    },
-    {
-      label: "Citizen Status",
-      value: "Not Yet Active",
-    },
-  ];
+  const inspectorCell = selectedCell ?? hoveredCell;
   return (
     <main className="min-h-screen bg-[#060708] px-4 py-6 text-stone-100 md:px-6 lg:px-8">
       <div className="mx-auto flex max-w-[1800px] flex-col gap-6">
-        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(216,173,95,0.2),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(78,123,183,0.16),_transparent_34%),linear-gradient(180deg,_rgba(255,255,255,0.055),_rgba(255,255,255,0.018))] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.55)] sm:p-8">
-          <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
+        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(255,210,113,0.18),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(78,123,183,0.22),_transparent_34%),linear-gradient(180deg,_rgba(255,255,255,0.06),_rgba(255,255,255,0.02))] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
             <SectionHeading
-              eyebrow="First Dawn Observatory"
-              title="FIRST DAWN ATLAS"
-              description="A measured view of the world before awakening."
+              eyebrow="Developer Atlas"
+              title="Planet Visualization Engine"
+              description="Inspect every deterministic simulation layer directly on the planetary grid. The atlas only visualizes existing simulation output and recomputes seasonal snapshots through the current engines."
             />
             <div className="flex flex-wrap gap-3">
-              <Link href="/" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">Observatory Home</Link>
-              <Link href="/worlds" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">World Dashboard</Link>
-              <Link href="/worlds/grid" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">Grid Inspector</Link>
+              <Link href="/worlds" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:bg-white/10">World Dashboard</Link>
+              <Link href="/worlds/grid" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:bg-white/10">Grid Inspector</Link>
             </div>
           </div>
 
-          <div className="mt-10 grid gap-px overflow-hidden border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-5">
-            {observatorySignals.map((signal) => (
-              <ObservatorySignalCard key={signal.label} label={signal.label} value={signal.value} />
-            ))}
-          </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
-            <div className="border border-amber-300/20 bg-amber-300/10 p-5 shadow-[0_20px_48px_rgba(0,0,0,0.28)]">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-200/80">Observation Layer</p>
-              <p className="mt-3 font-[family-name:var(--font-display)] text-2xl leading-tight text-stone-50">
-                This atlas is not a game map. It is an observation layer over a persistent simulation.
-              </p>
-              <p className="mt-3 text-sm leading-6 text-stone-300">
-                The controls below inspect existing simulation snapshots: cells, layers, overlays, timeline state, and measured planetary systems.
-              </p>
-            </div>
-            <div className="border border-white/10 bg-black/25 p-5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-stone-500">Current Instrument</p>
-              <p className="mt-3 text-lg text-stone-50">{activeVisualMode.label}</p>
-              <p className="mt-2 text-sm leading-6 text-stone-400">{activeViewMode.description}</p>
-            </div>
-          </div>
           <div className="mt-8 grid gap-4 lg:grid-cols-[1.4fr_1fr] xl:grid-cols-[1.8fr_1.1fr]">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <DetailCard label="World" value={snapshot.worldName} />
@@ -3341,11 +1610,7 @@ export function WorldMapAtlasClient({
               <DetailCard label="Solar Declination" value={`${formatNumber(snapshot.astronomy.solarDeclinationDegrees, 2)} deg`} />
               <DetailCard label="Grid" value={`${snapshot.grid.totalCells} cells`} />
               <DetailCard label="Status" value={selectedWorld.status} />
-              <DetailCard label="Active Overlay" value={selectedLayer.label} />
-              <DetailCard label="Humans" value={`${snapshot.humans.agents.length} visible`} />
-              <DetailCard label="Settlements" value={`${snapshot.settlements.activeCount} active`} />
-              <DetailCard label="Visual Mode" value={activeVisualMode.label} />
-              <DetailCard label="View" value={activeViewMode.label} />
+              <DetailCard label="Focused Layer" value={selectedLayer.label} />
             </div>
 
             <div className="rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
@@ -3355,7 +1620,6 @@ export function WorldMapAtlasClient({
                 <button type="button" onClick={() => setShowLegend((v) => !v)} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Legend (L)</button>
                 <button type="button" onClick={() => onToggleOverlay("gridLines")} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Grid (G)</button>
                 <button type="button" onClick={() => onToggleOverlay("windArrows")} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Wind (W)</button>
-                <button type="button" data-testid="humans-overlay-toggle" onClick={() => setShowHumansOverlay((value) => !value)} className={`rounded-full border px-3 py-1.5 text-xs ${showHumansOverlay ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100" : "border-white/10 bg-white/5 text-stone-200"}`}>Humans</button>
                 <button type="button" onClick={() => setSelectedLayerId("terrain")} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Terrain (T)</button>
                 <button type="button" onClick={() => setSelectedLayerId("climate")} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Climate (C)</button>
                 <button type="button" onClick={() => setSelectedLayerId("hydrology")} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-200">Hydrology (H)</button>
@@ -3378,21 +1642,13 @@ export function WorldMapAtlasClient({
                   aria-label="Simulation day"
                   min={1}
                   max={selectedWorld.yearLengthDays}
-                  value={draftDay}
-                  onChange={(event) => setDraftDay(Number(event.target.value))}
-                  onPointerUp={(event) => commitDraftDay(Number(event.currentTarget.value))}
-                  onPointerCancel={(event) => commitDraftDay(Number(event.currentTarget.value))}
-                  onKeyUp={(event) => {
-                    if (TIMELINE_COMMIT_KEYS.has(event.key)) {
-                      commitDraftDay(Number(event.currentTarget.value));
-                    }
-                  }}
-                  onBlur={(event) => commitDraftDay(Number(event.currentTarget.value))}
+                  value={requestedDay}
+                  onChange={(event) => setRequestedDay(Number(event.target.value))}
                   className="w-full accent-amber-300"
                 />
                 <div className="mt-2 flex items-center justify-between text-xs text-stone-400">
                   <span>Day 1</span>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-stone-200">Selected Day {draftDay}</span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-stone-200">Selected Day {requestedDay}</span>
                   <span>Day {selectedWorld.yearLengthDays}</span>
                 </div>
               </div>
@@ -3427,10 +1683,9 @@ export function WorldMapAtlasClient({
                         value={selectedWorldId}
                         onChange={(event) => {
                           const nextWorld = worlds.find((world) => world.id === event.target.value) ?? worlds[0];
-                          const clampedDay = clamp(draftDay, 1, nextWorld.yearLengthDays);
+                          const clampedDay = clamp(requestedDay, 1, nextWorld.yearLengthDays);
                           setSelectedWorldId(nextWorld.id);
-                          setDraftDay(clampedDay);
-                          setCommittedDay(clampedDay);
+                          setRequestedDay(clampedDay);
                         }}
                         className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0c1218] px-3 py-2 text-sm text-stone-100 outline-none transition focus:border-amber-300/50"
                       >
@@ -3439,93 +1694,6 @@ export function WorldMapAtlasClient({
                         ))}
                       </select>
                     </label>
-
-                    <div className="rounded-xl border border-teal-300/15 bg-teal-300/[0.04] p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.22em] text-stone-500">Run Controls</p>
-                          <p className="mt-1 text-xs text-stone-400">Snapshot day stepping</p>
-                        </div>
-                        <button type="button" onClick={() => setIsRunning((value) => !value)} className={`rounded-lg border px-3 py-2 text-xs uppercase tracking-[0.18em] ${isRunning ? "border-amber-300/50 bg-amber-300/15 text-amber-100" : "border-teal-300/40 bg-teal-300/10 text-teal-100"}`}>{isRunning ? "Pause" : "Run"}</button>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        <button type="button" onClick={() => commitDraftDay(draftDay - 1)} className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-stone-200 hover:bg-white/[0.08]">Tick -</button>
-                        <button type="button" onClick={() => commitDraftDay(draftDay)} className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-2 py-2 text-xs text-amber-100 hover:bg-amber-300/15">Load</button>
-                        <button type="button" onClick={() => commitDraftDay(draftDay + 1)} className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-stone-200 hover:bg-white/[0.08]">Tick +</button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-xs uppercase tracking-[0.22em] text-stone-500">View Mode</span>
-                      <div className="mt-2 grid gap-2">
-                        {VIEW_MODE_OPTIONS.map((mode) => (
-                          <button
-                            key={mode.id}
-                            type="button"
-                            onClick={() => setViewMode(mode.id)}
-                            className={`rounded-xl border px-3 py-2 text-left text-sm transition ${viewMode === mode.id ? "border-cyan-300/45 bg-cyan-300/12 text-cyan-100" : "border-white/10 bg-white/[0.03] text-stone-200 hover:bg-white/[0.07]"}`}
-                          >
-                            <span className="block">{mode.label}</span>
-                            <span className="mt-1 block text-xs text-stone-500">{mode.description}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-xs uppercase tracking-[0.22em] text-stone-500">Visual Mode</span>
-                      <div className="mt-2 grid gap-2">
-                        {VISUAL_MODE_OPTIONS.map((mode) => (
-                          <button
-                            key={mode.id}
-                            type="button"
-                            onClick={() => setVisualMode(mode.id)}
-                            className={`rounded-xl border px-3 py-2 text-left text-sm transition ${visualMode === mode.id ? "border-teal-300/45 bg-teal-300/12 text-teal-100" : "border-white/10 bg-white/[0.03] text-stone-200 hover:bg-white/[0.07]"}`}
-                          >
-                            <span className="block">{mode.label}</span>
-                            <span className="mt-1 block text-xs text-stone-500">{mode.description}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <label className="mt-3 block">
-                        <span className="flex items-center justify-between text-xs uppercase tracking-[0.22em] text-stone-500"><span>Grid Opacity</span><span>{formatPercent(gridOpacity)}</span></span>
-                        <input aria-label="Grid Opacity" type="range" min={0} max={0.9} step={0.03} value={gridOpacity} onChange={(event) => setGridOpacity(Number(event.target.value))} className="mt-2 w-full accent-teal-300" />
-                      </label>
-                    </div>
-
-                    <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
-                      <span className="text-xs uppercase tracking-[0.22em] text-stone-500">Beauty Effects</span>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        {BEAUTY_QUALITY_OPTIONS.map((quality) => (
-                          <button
-                            key={quality.id}
-                            type="button"
-                            onClick={() => setBeautyQuality(quality.id)}
-                            className={`rounded-lg border px-2 py-2 text-xs transition ${beautyQuality === quality.id ? "border-cyan-300/45 bg-cyan-300/12 text-cyan-100" : "border-white/10 bg-white/[0.03] text-stone-300 hover:bg-white/[0.07]"}`}
-                          >
-                            {quality.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-3 grid gap-2">
-                        <label className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-stone-200">
-                          <span>Atmosphere</span>
-                          <input type="checkbox" checked={atmosphereEnabled} onChange={() => setAtmosphereEnabled((value) => !value)} className="accent-cyan-300" />
-                        </label>
-                        <label className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-stone-200">
-                          <span>Day / Night</span>
-                          <input type="checkbox" checked={dayNightEnabled} onChange={() => setDayNightEnabled((value) => !value)} className="accent-cyan-300" />
-                        </label>
-                        <label className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-stone-200">
-                          <span>Clouds</span>
-                          <input type="checkbox" checked={cloudsEnabled} onChange={() => setCloudsEnabled((value) => !value)} className="accent-cyan-300" />
-                        </label>
-                      </div>
-                      <label className="mt-3 block">
-                        <span className="flex items-center justify-between text-xs uppercase tracking-[0.22em] text-stone-500"><span>Cloud Opacity</span><span>{formatPercent(cloudOpacity)}</span></span>
-                        <input aria-label="Cloud Opacity" type="range" min={0} max={0.65} step={0.01} value={cloudOpacity} onChange={(event) => setCloudOpacity(Number(event.target.value))} className="mt-2 w-full accent-cyan-300" />
-                      </label>
-                    </div>
 
                     <div>
                       <span className="text-xs uppercase tracking-[0.22em] text-stone-500">Layer Selector</span>
@@ -3542,10 +1710,13 @@ export function WorldMapAtlasClient({
                                     key={layer.id}
                                     type="button"
                                     data-testid={`layer-${layer.id}`}
+                                    disabled={layer.disabled}
                                     onClick={() => onLayerSelect(layer.id)}
-                                    className={`rounded-xl border px-3 py-2 text-left text-sm transition ${active
-                                      ? "border-amber-300/45 bg-amber-300/12 text-amber-100"
-                                      : "border-white/10 bg-white/[0.03] text-stone-200 hover:bg-white/[0.07]"}`}
+                                    className={`rounded-xl border px-3 py-2 text-left text-sm transition ${layer.disabled
+                                      ? "cursor-not-allowed border-white/5 bg-white/[0.03] text-stone-600"
+                                      : active
+                                        ? "border-amber-300/45 bg-amber-300/12 text-amber-100"
+                                        : "border-white/10 bg-white/[0.03] text-stone-200 hover:bg-white/[0.07]"}`}
                                   >
                                     <span className="block">{layer.label}</span>
                                     <span className="mt-1 block text-xs text-stone-500">{layer.description}</span>
@@ -3559,8 +1730,7 @@ export function WorldMapAtlasClient({
                     </div>
 
                     <div>
-                      <button type="button" onClick={() => setShowAdvanced((value) => !value)} className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-xs uppercase tracking-[0.22em] text-stone-400">{showAdvanced ? "Hide Advanced / Debug" : "Advanced / Debug"}</button>
-                      {showAdvanced ? (
+                      <span className="text-xs uppercase tracking-[0.22em] text-stone-500">Debug Tools</span>
                       <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
                         {(Object.keys(OVERLAY_TOGGLE_LABELS) as OverlayId[]).map((overlayId) => (
                           <label key={overlayId} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-stone-200">
@@ -3574,7 +1744,6 @@ export function WorldMapAtlasClient({
                           </label>
                         ))}
                       </div>
-                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -3626,7 +1795,7 @@ export function WorldMapAtlasClient({
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Map Layer</p>
                       <p className="mt-2 text-xl text-stone-50">{selectedLayer.label}</p>
-                      <p className="mt-1 text-sm text-stone-400">{selectedLayer.description} {activeVisualMode.description}</p>
+                      <p className="mt-1 text-sm text-stone-400">{selectedLayer.description}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={resetView} className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-stone-200 transition hover:bg-white/10">Reset View</button>
@@ -3635,23 +1804,7 @@ export function WorldMapAtlasClient({
                     </div>
                   </div>
 
-                  {viewMode === "globePreview" ? (
-                    <GlobePreviewPanel
-                      descriptor={atlasTextureDescriptor}
-                      snapshot={snapshot}
-                      atlasTextureRef={baseLayerBufferRef}
-                      selectedCellId={selectedCellId}
-                      rotationSpeed={globeRotationSpeed}
-                      rotationPaused={isGlobeRotationPaused}
-                      showClouds={cloudsEnabled}
-                      showAtmosphere={atmosphereEnabled}
-                      showDayNight={dayNightEnabled}
-                      beautyQuality={effectiveBeautyQuality}
-                      onSelectCell={selectInspectorCell}
-                      onHoverCell={(cellId, point) => setHoverState(cellId && point ? { cellId, x: point.x, y: point.y } : null)}
-                    />
-                  ) : null}
-                  <div ref={canvasHostRef} className={viewMode === "developerAtlas" ? "relative h-[620px] overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#071017] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]" : "hidden"}>
+                  <div ref={canvasHostRef} className="relative h-[620px] overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#071017] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]">
                     <canvas
                       ref={canvasRef}
                       data-testid="world-map-canvas"
@@ -3663,28 +1816,27 @@ export function WorldMapAtlasClient({
                       onPointerLeave={onCanvasPointerLeave}
                       onClick={onCanvasClick}
                     />
-                    {(tooltipCell && tooltipSummary) ? (
-                      <div data-testid="atlas-tooltip" className="pointer-events-none absolute right-4 top-4 z-50 w-80 rounded-2xl border border-white/10 bg-[#0b1117]/95 p-4 shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur">
+                    {hoveredCell && hoverState && tooltipSummary ? (
+                      <div data-testid="atlas-tooltip" className="pointer-events-none absolute right-4 top-4 z-10 w-80 rounded-2xl border border-white/10 bg-[#0b1117]/95 p-4 shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-[10px] uppercase tracking-[0.28em] text-amber-300/80">{hoveredCell ? "Hover Cell" : "Selected Cell"}</p>
-                            <p className="mt-1 text-sm font-medium text-stone-50">{tooltipCell.id}</p>
+                            <p className="text-[10px] uppercase tracking-[0.28em] text-amber-300/80">Hover Cell</p>
+                            <p className="mt-1 text-sm font-medium text-stone-50">{hoveredCell.id}</p>
                           </div>
                           <div className="text-right text-xs text-stone-400">
-                            <p>{formatLatitude(tooltipCell.midpointLatitude)}</p>
-                            <p>{formatLongitude(tooltipCell.midpointLongitude)}</p>
+                            <p>{formatLatitude(hoveredCell.midpointLatitude)}</p>
+                            <p>{formatLongitude(hoveredCell.midpointLongitude)}</p>
                           </div>
                         </div>
                         <div className="mt-4 grid gap-2 text-xs text-stone-200">
-                          <p><span className="text-stone-500">Elevation</span> {formatNumber(tooltipCell.elevation, 3)}</p>
-                          <p><span className="text-stone-500">Terrain</span> {titleize(tooltipCell.terrainType)}</p>
-                          <p><span className="text-stone-500">Climate</span> {tooltipCell.climateBand}</p>
-                          <p><span className="text-stone-500">Temperature</span> {formatTemperature(tooltipCell.averageTemperatureC)}</p>
-                          <p><span className="text-stone-500">Solar Energy</span> {formatNumber(tooltipCell.solarEnergy, 3)}</p>
+                          <p><span className="text-stone-500">Elevation</span> {formatNumber(hoveredCell.elevation, 3)}</p>
+                          <p><span className="text-stone-500">Terrain</span> {titleize(hoveredCell.terrainType)}</p>
+                          <p><span className="text-stone-500">Climate</span> {hoveredCell.climateBand}</p>
+                          <p><span className="text-stone-500">Temperature</span> {formatTemperature(hoveredCell.averageTemperatureC)}</p>
+                          <p><span className="text-stone-500">Solar Energy</span> {formatNumber(hoveredCell.solarEnergy, 3)}</p>
                           <p><span className="text-stone-500">Hydrology</span> {tooltipSummary.hydrology}</p>
                           <p><span className="text-stone-500">Atmosphere</span> {tooltipSummary.atmosphere}</p>
                           <p><span className="text-stone-500">Weather</span> {tooltipSummary.weather}</p>
-                          <p><span className="text-stone-500">Resources</span> {tooltipSummary.resources}</p>
                         </div>
                       </div>
                     ) : null}
@@ -3694,13 +1846,13 @@ export function WorldMapAtlasClient({
                         <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Drag: pan</span>
                         <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Click: inspect cell</span>
                       </div>
-                      <p className="text-xs text-stone-500">{error ?? `${snapshot.grid.totalCells} logical cells / ${activeVisualMode.label} render`}</p>
+                      <p className="text-xs text-stone-500">{error ?? `${snapshot.grid.totalCells} cells rendered deterministically`}</p>
                     </div>
                   </div>
 
                   <div className="rounded-[1.5rem] border border-white/10 bg-black/20 p-4" style={{ opacity: legendOpacity }}>
                     <div className="flex items-center justify-between">
-                      <div><p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Legend / Quick Stats</p><p className="mt-1 text-xs text-stone-400">Visual render layer is separate from the 18x36 simulation grid.</p></div>
+                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Legend</p>
                       <div className="flex items-center gap-2">
                         <label className="flex items-center gap-2 text-xs text-stone-400"><span>Opacity</span><input aria-label="Legend Opacity" type="range" min={0.4} max={1} step={0.05} value={legendOpacity} onChange={(e) => setLegendOpacity(Number(e.target.value))} /></label>
                         <button type="button" onClick={() => setLegendPinned((v) => !v)} className={`rounded-full border px-2 py-1 text-xs ${legendPinned ? "border-amber-300/40 bg-amber-300/10 text-amber-100" : "border-white/10 bg-white/5 text-stone-200"}`}>{legendPinned ? "Pinned" : "Pin"}</button>
@@ -3726,16 +1878,6 @@ export function WorldMapAtlasClient({
           </div>
 
           <aside className="space-y-6">
-            <WorldHealthPanel health={health} loading={isHealthLoading} error={healthError} />
-            <HumanInspectorPanel
-              human={selectedHuman}
-              humans={snapshot.humans.agents}
-              onSelectHuman={selectHuman}
-              onFocusHuman={focusHuman}
-              onSimulateOneDay={() => commitDraftDay(draftDay + 1)}
-            />
-            <FutureLayersPanel snapshot={snapshot} selectedCell={inspectorCell} loading={isAtlasLoading || isPending} error={error} />
-
             <section data-testid="statistics-panel" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
               <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Statistics</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
@@ -3754,7 +1896,6 @@ export function WorldMapAtlasClient({
                 <DetailCard label="Largest Continent" value={`${snapshot.terrainSummary.largestContinentEstimate} cells`} />
                 <DetailCard label="Largest Ocean" value={`${snapshot.terrainSummary.largestOceanEstimate} cells`} />
                 <DetailCard label="Strongest Wind" value={snapshot.statistics.strongestWind ? `${snapshot.statistics.strongestWind.windDirection} ${formatNumber(snapshot.statistics.strongestWind.windStrength, 3)}` : "-"} />
-                <DetailCard label="Resource Diversity" value={formatPercent(snapshot.resourceSummary.resourceDiversity)} />
               </div>
             </section>
 
@@ -3771,7 +1912,7 @@ export function WorldMapAtlasClient({
                 <IntegrityRow label="Weather Validated" ok={snapshot.integrity.weatherValidated} />
               </div>
             </section>
-            <section data-testid="cell-inspector" className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
+            <section data-testid="cell-inspector" className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,_rgba(255,255,255,0.04),_rgba(255,255,255,0.015))] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
               <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Cell Inspector</p>
               {inspectorCell ? (
                 <div className="mt-4 space-y-4 text-sm text-stone-200">
@@ -3781,33 +1922,6 @@ export function WorldMapAtlasClient({
                     <p className="mt-1 text-sm text-stone-400">{formatLatitude(inspectorCell.midpointLatitude)} / {formatLongitude(inspectorCell.midpointLongitude)}</p>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/8 p-4">
-                    <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-200/80">Humans In Cell</p>
-                    <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                      {(humansByCell.get(inspectorCell.id) ?? []).length > 0 ? (humansByCell.get(inspectorCell.id) ?? []).map((human) => (
-                        <button key={human.id} type="button" onClick={() => selectHuman(human)} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-xs text-stone-200 hover:bg-white/[0.07]">
-                          <span className="block text-stone-50">{human.label}</span>
-                          <span className="mt-1 block text-stone-400">{human.sex} / {human.currentAction ? titleize(human.currentAction) : "no action"}</span>
-                        </button>
-                      )) : <p>No humans are currently in this cell.</p>}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/8 p-4">
-                    <p className="text-[10px] uppercase tracking-[0.28em] text-emerald-200/80">Settlements In Cell</p>
-                    <div className="mt-3 grid gap-3 text-xs text-stone-200">
-                      {(settlementsByCell.get(inspectorCell.id) ?? []).length > 0 ? (settlementsByCell.get(inspectorCell.id) ?? []).map((settlement) => (
-                        <div key={settlement.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                          <p className="text-stone-50">{settlement.name}</p>
-                          <p className="mt-1 text-stone-400">{settlement.type} / {titleize(settlement.status)} / Pop {settlement.population}</p>
-                          <p className="mt-1 text-stone-400">Age {formatNumber(settlement.ageTicks, 0)} ticks / Permanence {formatNumber(settlement.permanence, 3)}</p>
-                          <p className="mt-1 text-stone-400">Resources {Object.entries(settlement.storedResources).filter(([, value]) => value > 0).map(([key, value]) => `${titleize(key)} ${formatNumber(value, 2)}`).join(", ") || "None"}</p>
-                          <p className="mt-1 text-stone-400">Structures {settlement.structures.join(", ") || "None"}</p>
-                          <p className="mt-1 text-stone-400">Events {settlement.majorEvents.slice(-3).map((event) => event.type).join(", ") || "None"}</p>
-                        </div>
-                      )) : <p>No camp or settlement is currently associated with this cell.</p>}
-                    </div>
-                  </div>
                   <div className="space-y-3">
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                       <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Planet</p>
@@ -3881,22 +1995,6 @@ export function WorldMapAtlasClient({
                     </div>
 
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Resources</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        <p>Bedrock {titleize(inspectorCell.bedrockType)}</p>
-                        <p>Iron {formatPercent(inspectorCell.metals.iron)}</p>
-                        <p>Copper {formatPercent(inspectorCell.metals.copper)}</p>
-                        <p>Coal {formatPercent(inspectorCell.industrialMaterials.coal)}</p>
-                        <p>Gold {formatPercent(inspectorCell.metals.gold)}</p>
-                        <p>Groundwater {formatPercent(inspectorCell.waterResources.groundwaterPotential)}</p>
-                        <p>Stone {formatPercent(inspectorCell.buildingResources.stone)}</p>
-                        <p>Clay {formatPercent(inspectorCell.industrialMaterials.clay)}</p>
-                        <p>Rare Earths {formatPercent(inspectorCell.rareMaterials.rareEarthElements)}</p>
-                        <p>Volcanic influence {formatPercent(inspectorCell.volcanicInfluence)}</p>
-                        <p>Sediment depth {formatPercent(inspectorCell.sedimentDepth)}</p>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                       <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Weather</p>
                       <div className="mt-3 grid gap-2 text-xs text-stone-200">
                         <p>Cloud cover {formatPercent(inspectorCell.cloudCover)}</p>
@@ -3912,101 +2010,17 @@ export function WorldMapAtlasClient({
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Biome</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        <p>Biome {formatAtlasLabel(inspectorCell.biomeName, "Unclassified")}</p>
-                        <p>Category {titleize(formatAtlasLabel(inspectorCell.biomeCategory, "unclassified"))}</p>
-                        <p>Key {formatAtlasLabel(inspectorCell.biomeKey, "unclassified")}</p>
-                        <p>Habitability {formatNumber(inspectorCell.habitabilityScore, 3)}</p>
-                        <p>Fertility {formatNumber(inspectorCell.fertilityScore, 3)}</p>
-                        <p>Water availability {formatNumber(inspectorCell.waterAvailabilityScore, 3)}</p>
-                        <p>Vegetation density {formatNumber(inspectorCell.vegetationDensity, 3)}</p>
-                        <p>Tags {formatTagList(inspectorCell.biomeTags, "Unclassified")}</p>
+                    {[
+                      "Biome",
+                      "Ecology",
+                      "Species",
+                      "Civilization",
+                    ].map((placeholder) => (
+                      <div key={placeholder} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs text-stone-500">
+                        <p className="uppercase tracking-[0.28em]">{placeholder}</p>
+                        <p className="mt-2">Reserved for future simulation milestones.</p>
                       </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Ecology</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        <p>Dominant plant {formatAtlasLabel(inspectorCell.dominantPlantName, "No Established Plant Life")}</p>
-                        <p>Plant category {titleize(formatAtlasLabel(inspectorCell.dominantPlantCategory, "none"))}</p>
-                        <p>Plant key {formatAtlasLabel(inspectorCell.dominantPlantKey, "none")}</p>
-                        <p>Plant suitability {formatNumber(inspectorCell.plantSuitabilityScore, 3)}</p>
-                        <p>Plant density {formatNumber(inspectorCell.plantDensity, 3)}</p>
-                        <p>Biomass {formatNumber(inspectorCell.biomassScore, 3)}</p>
-                        <p>Edible plant score {formatNumber(inspectorCell.ediblePlantScore, 3)}</p>
-                        <p>Wood material score {formatNumber(inspectorCell.woodMaterialScore, 3)}</p>
-                        <p>Medicinal potential {formatNumber(inspectorCell.medicinalPotentialScore, 3)}</p>
-                        <p>Biodiversity {formatNumber(inspectorCell.biodiversityScore, 3)}</p>
-                        <p>Regrowth {formatNumber(inspectorCell.regrowthRate, 3)}</p>
-                        <p>Seasonal stress {formatNumber(inspectorCell.seasonalStressScore, 3)}</p>
-                        <p>Plant tags {formatTagList(inspectorCell.plantTags)}</p>
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Animals</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        <p>Dominant species {formatAtlasLabel(inspectorCell.dominantSpeciesName, "No Established Wildlife")}</p>
-                        <p>Dominant guild {formatAtlasLabel(inspectorCell.dominantAnimalGuildName, "No Established Animal Guild")}</p>
-                        <p>Species present {formatNumber(inspectorCell.speciesCount, 0)}</p>
-                        <p>Total population {formatNumber(inspectorCell.totalWildlifePopulation, 0)}</p>
-                        <p>Ecosystem health {inspectorCell.ecosystemHealthStatus} / {formatNumber(inspectorCell.ecosystemHealthScore, 3)}</p>
-                        <p>Habitat suitability {formatNumber(inspectorCell.averageHabitatSuitability, 3)}</p>
-                        <p>Health {formatNumber(inspectorCell.averagePopulationHealth, 3)}</p>
-                        <p>Food availability {formatNumber(inspectorCell.animalPopulations[0]?.foodAvailability ?? 0, 3)}</p>
-                        <p>Food stability {formatNumber(inspectorCell.foodStability, 3)}</p>
-                        <p>Plant consumption {formatNumber(inspectorCell.plantConsumptionRate, 3)}</p>
-                        <p>Predation pressure {formatNumber(inspectorCell.predationPressure, 3)}</p>
-                        <p>Carrying usage {formatNumber(inspectorCell.carryingCapacityUsage, 3)}</p>
-                        <p>Migration pressure {formatNumber(inspectorCell.migrationPressure, 3)}</p>
-                        <p>Migration activity {formatNumber(inspectorCell.migrationActivity, 3)}</p>
-                        <p>Movement vectors {inspectorCell.movementVectors.map((vector) => `${vector.speciesId}: ${vector.fromCellId} -> ${vector.toCellId} (${formatNumber(vector.population, 0)})`).join(", ") || "None"}</p>
-                        <p>History {inspectorCell.ecosystemHistory.slice(0, 4).map((event) => `Tick ${event.tick}: ${event.type}`).join(", ") || "None"}</p>
-                        <p>Populations {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 8).map((population) => `${population.speciesName}: ${formatNumber(population.population, 0)}`).join(", ") || "None"}</p>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Adaptation</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        <p>Overall fitness {formatNumber(inspectorCell.averageFitness, 3)}</p>
-                        <p>Adaptation diversity {formatNumber(inspectorCell.adaptationDiversity, 3)}</p>
-                        <p>Highest adapted {inspectorCell.highestAdaptedPopulation ? `${inspectorCell.highestAdaptedPopulation.speciesName}: ${formatNumber(inspectorCell.highestAdaptedPopulation.score, 3)}` : "None"}</p>
-                        <p>Lowest fitness {inspectorCell.lowestFitnessPopulation ? `${inspectorCell.lowestFitnessPopulation.speciesName}: ${formatNumber(inspectorCell.lowestFitnessPopulation.score, 3)}` : "None"}</p>
-                        <p>Top strengths {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 3).map((population) => {
-                          const traits = Object.entries(population.adaptationProfile).sort((left, right) => right[1] - left[1]).slice(0, 2).map(([trait, value]) => `${titleize(trait)} ${formatNumber(value, 2)}`).join(" / ");
-                          return `${population.speciesName}: ${traits}`;
-                        }).join(", ") || "None"}</p>
-                        <p>Biggest weaknesses {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 3).map((population) => {
-                          const traits = Object.entries(population.adaptationProfile).sort((left, right) => left[1] - right[1]).slice(0, 2).map(([trait, value]) => `${titleize(trait)} ${formatNumber(value, 2)}`).join(" / ");
-                          return `${population.speciesName}: ${traits}`;
-                        }).join(", ") || "None"}</p>
-                        {inspectorCell.animalPopulations.filter((population) => population.population > 0).slice(0, 4).map((population) => {
-                          const trend = population.adaptationTrends.find((entry) => entry.direction !== "Stable") ?? population.adaptationTrends[0];
-                          return (
-                            <div key={`${population.speciesId}-adaptation`} className="mt-2 border-t border-white/10 pt-2">
-                              <p className="text-stone-100">{population.speciesName}</p>
-                              <p>Cold Tolerance <HealthBar value={population.adaptationProfile.coldTolerance} /> {formatNumber(population.adaptationProfile.coldTolerance, 2)}</p>
-                              <p>Heat Tolerance <HealthBar value={population.adaptationProfile.heatTolerance} /> {formatNumber(population.adaptationProfile.heatTolerance, 2)}</p>
-                              <p>Drought Tolerance <HealthBar value={population.adaptationProfile.droughtTolerance} /> {formatNumber(population.adaptationProfile.droughtTolerance, 2)}</p>
-                              <p>Foraging Efficiency <HealthBar value={population.adaptationProfile.foragingEfficiency} /> {formatNumber(population.adaptationProfile.foragingEfficiency, 2)}</p>
-                              <p>Trend: {trend?.direction ?? "Stable"}</p>
-                              <p>Reason: {trend?.reason ?? "Stable local pressure."}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Warnings</p>
-                      <div className="mt-3 grid gap-2 text-xs text-stone-200">
-                        {(getCellWarnings(inspectorCell).length > 0 ? getCellWarnings(inspectorCell) : ["No unstable conditions flagged for this cell."]).map((warning) => (
-                          <p key={warning}>{warning}</p>
-                        ))}
-                      </div>
-                    </div>
-                    <LayerStatusCard label="Civilizations" value="Civilization Systems Not Generated Yet" />
+                    ))}
                   </div>
                 </div>
               ) : (
@@ -4019,14 +2033,3 @@ export function WorldMapAtlasClient({
     </main>
   );
 }
-
-
-
-
-
-
-
-
-
-
-

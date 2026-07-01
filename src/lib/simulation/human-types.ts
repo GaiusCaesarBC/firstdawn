@@ -8,6 +8,16 @@ export const FIRST_HUMAN_START_CELL_ID = "cell-09-18";
 
 export type HumanSex = "male" | "female";
 
+export type HumanAgeStage = "Infant" | "Child" | "Adolescent" | "Adult" | "Elder";
+
+export type HumanFamilyHistoryEntry = {
+  tick: string;
+  type: string;
+  summary: string;
+  relatedHumanIds: string[];
+  settlementId: string | null;
+};
+
 export type HumanNeedKey = "hunger" | "thirst" | "fatigue" | "safety" | "social";
 
 export type HumanNeeds = Record<HumanNeedKey, number>;
@@ -176,6 +186,20 @@ export type HumanAgent = {
   motherId: string | null;
   fatherId: string | null;
   generation: number;
+  biologicalParentIds: string[];
+  guardianIds: string[];
+  childIds: string[];
+  siblingIds: string[];
+  mateId: string | null;
+  familyId: string | null;
+  lineageId: string | null;
+  ageStage: HumanAgeStage;
+  birthplaceCellId: string;
+  birthplaceSettlementId: string | null;
+  inheritedHomeCellId: string | null;
+  inheritedSettlementId: string | null;
+  ancestryTags: string[];
+  familyHistory: HumanFamilyHistoryEntry[];
   needs: HumanNeeds;
   emotions: HumanEmotionState;
   curiosityProfile: HumanCuriosityProfile;
