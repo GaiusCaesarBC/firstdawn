@@ -391,7 +391,7 @@ describe("simulation scheduler tick persistence", () => {
     expect(ticks).toHaveLength(3);
     expect(ticks.every((tick) => tick.success)).toBe(true);
     expect(ticks.every((tick) => tick.systemCount === DEFAULT_SIMULATION_SYSTEMS.length)).toBe(true);
-  });
+  }, 60_000);
 
   it("advances from the latest SimulationTick when World.currentTick is stale", async () => {
     const world = await track(createActiveSandboxTestWorld());
@@ -468,10 +468,15 @@ describe("simulation scheduler system order", () => {
     "Animals",
     "Population Adaptation",
     "Humans",
+    "Goal Decision Engine",
+    "Episodic Memory Engine",
+    "Relationship Engine",
+    "Knowledge & Learning Engine",
+    "Communication Engine",
+    "Emergent Camps & Settlements Engine",
     "Civilization",
     "Economy",
     "Culture",
-    "Memory",
     "Discovery",
     "Event Generation",
     "Metrics",

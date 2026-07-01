@@ -89,7 +89,7 @@ export async function analyzeDiscoveryState(context: SimulationSystemContext): P
 
   for (const event of current) {
     if (event.type === "Human Teaching") teachingCount += 1;
-    if (event.type === "Human Communication") communicationCount += 1;
+    if (event.type === "Human Communication" || event.type === "Human Communication Event") communicationCount += 1;
 
     const mapped = normalizePhenomenon(event);
     if (!mapped) continue;

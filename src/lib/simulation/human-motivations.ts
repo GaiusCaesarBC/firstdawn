@@ -93,29 +93,33 @@ export function dominantMotivation(motivations: HumanMotivations): { key: HumanM
 }
 
 export function deriveGoal(agent: HumanAgent, motivations: HumanMotivations, tick: bigint): HumanGoal {
-  const { key } = dominantMotivation(motivations);
-  let text = "";
-
-  if (agent.needs.hunger > 0.65) text = "I'm hungry.";
-  else if (agent.needs.thirst > 0.65) text = "I'm thirsty.";
-  else {
-    switch (key) {
-      case "explore": text = "I should explore."; break;
-      case "learn": text = "I should examine how things work."; break;
-      case "socialize": text = "I want to stay close to my companion."; break;
-      case "teach": text = "I should teach something."; break;
-      case "improveShelter": text = "I should improve this shelter."; break;
-      case "observeSurroundings": text = "I should observe my surroundings."; break;
-      case "practiceSkills": text = "I should practice a skill."; break;
-      case "collectObjects": text = "I should collect something useful."; break;
-      default: text = "I should rest for a moment."; break;
-    }
-  }
+  const { key, score } = dominantMotivation(motivations);
+  const type = agent.needs.hunger > 0.65
+    ? "Find Food"
+    : agent.needs.thirst > 0.65
+      ? "Find Water"
+      : key === "explore"
+        ? "Explore"
+        : key === "socialize"
+          ? "Socialize"
+          : key === "improveShelter"
+            ? "Seek Shelter"
+            : key === "observeSurroundings"
+              ? "Observe"
+              : key === "restVoluntary"
+                ? "Rest"
+                : "Wander";
 
   return {
-    id: `${agent.id}:goal:${tick.toString()}:${key}`,
-    text,
+    id: `${agent.id}:legacy-goal:${tick.toString()}:${type.toLowerCase().replaceAll(" ", "-")}`,
+    type,
+    priority: score,
     createdTick: tick.toString(),
-    expiresTick: (tick + 8n).toString(),
+    targetId: null,
+    targetCellId: agent.currentCellId,
+    progress: 0,
+    confidence: agent.confidence,
+    reason: agent.needs.hunger > 0.65 ? "Hungry" : agent.needs.thirst > 0.65 ? "Thirst" : "Curiosity",
+    status: "Active",
   };
 }

@@ -72,6 +72,7 @@ type LayerId =
   | "adaptationMigration"
   | "adaptationForaging"
   | "adaptationPredator"
+  | "settlements"
   | "civilizations";
 
 type OverlayId =
@@ -211,6 +212,7 @@ const LAYERS: LayerDefinition[] = [
   { id: "biomes", label: "Biomes", group: "Future Layers", description: "Live deterministic biome classifications." },
   { id: "vegetation", label: "Vegetation", group: "Future Layers", description: "Live dominant plant ecology and biomass." },
   { id: "animals", label: "Animals", group: "Ecosystem", description: "Animal ecology status for the selected cell or planet." },
+  { id: "settlements", label: "Settlements", group: "Human Systems", description: "Emergent camps and settlement permanence." },
   { id: "ecosystemMigration", label: "Migration", group: "Ecosystem", description: "Population movement pressure and realized neighbor migration." },
   { id: "foodAvailability", label: "Food Availability", group: "Ecosystem", description: "Food stability after plant consumption and seasonal stress." },
   { id: "predationPressure", label: "Predation", group: "Ecosystem", description: "Predator pressure on herbivore populations." },
@@ -832,6 +834,15 @@ function getLayerColor(snapshot: AtlasSnapshot, cell: AtlasCell, layerId: LayerI
         { at: 0.78, color: "#b6ad67" },
         { at: 1, color: "#f1d98d" },
       ]);
+    case "settlements": {
+      const settlement = snapshot.settlements.settlements.find((entry) => entry.occupiedCells.includes(cell.id) || entry.homeCellId === cell.id);
+      return settlement ? sampleGradient(settlement.permanence, [
+        { at: 0, color: "#3a3430" },
+        { at: 0.35, color: "#766451" },
+        { at: 0.7, color: "#8ca06a" },
+        { at: 1, color: "#d3c07c" },
+      ]) : "#303238";
+    }
     case "civilizations":
       return "#303238";
     default:
@@ -893,6 +904,12 @@ function getLegendItems(snapshot: AtlasSnapshot, layerId: LayerId): LegendItem[]
         { at: 0.78, color: "#b6ad67" },
         { at: 1, color: "#f1d98d" },
       ]) }));
+    case "settlements":
+      return [
+        { label: "No camp", color: "#303238" },
+        { label: "Temporary", color: "#766451" },
+        { label: "Permanent", color: "#d3c07c" },
+      ];
     case "civilizations":
       return [{ label: "Not Generated Yet", color: "#303238" }];
     case "watersheds":
@@ -1014,6 +1031,19 @@ function windDirectionVector(direction: string): { x: number; y: number } {
 }
 
 
+type AtlasSettlementView = AtlasSnapshot["settlements"]["settlements"][number];
+
+function getSettlementsByCell(settlements: readonly AtlasSettlementView[]): Map<string, AtlasSettlementView[]> {
+  const map = new Map<string, AtlasSettlementView[]>();
+
+  for (const settlement of settlements) {
+    for (const cellId of new Set([settlement.homeCellId, ...settlement.occupiedCells])) {
+      map.set(cellId, [...(map.get(cellId) ?? []), settlement].sort((left, right) => right.importance - left.importance || left.name.localeCompare(right.name)));
+    }
+  }
+
+  return map;
+}
 type AtlasHumanAgentView = AtlasSnapshot["humans"]["agents"][number];
 
 type HumanMarkerPoint = {
@@ -1621,6 +1651,15 @@ function DetailCard({ label, value }: { label: string; value: string }) {
 }
 
 
+function ObservatorySignalCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-h-28 border border-white/10 bg-black/30 p-4 shadow-[0_16px_36px_rgba(0,0,0,0.22)]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-300/80">{label}</p>
+      <p className="mt-4 break-words text-sm leading-6 text-stone-50 sm:text-base">{value}</p>
+    </div>
+  );
+}
+
 function HumanMetricRows({ values }: { values: Record<string, number> }) {
   return (
     <div className="grid gap-1.5">
@@ -2079,9 +2118,9 @@ function IntegrityRow({ label, ok }: { label: string; ok: boolean }) {
 function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-[0.35em] text-amber-300/75">{eyebrow}</p>
-      <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-stone-50">{title}</h2>
-      <p className="mt-2 max-w-3xl text-sm text-stone-300">{description}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.34em] text-amber-300/80">{eyebrow}</p>
+      <h1 className="mt-4 font-[family-name:var(--font-display)] text-5xl font-semibold uppercase leading-[0.9] text-stone-50 sm:text-6xl lg:text-7xl">{title}</h1>
+      <p className="mt-5 max-w-3xl font-[family-name:var(--font-display)] text-2xl leading-tight text-amber-200 sm:text-3xl">{description}</p>
     </div>
   );
 }
@@ -2358,6 +2397,7 @@ export function WorldMapAtlasClient({
   const selectedCell = selectedCellId ? snapshotCellById.get(selectedCellId) ?? null : null;
   const hoveredCell = hoverState ? snapshotCellById.get(hoverState.cellId) ?? null : null;
   const humansByCell = useMemo(() => getHumansByCell(snapshot.humans.agents), [snapshot.humans.agents]);
+  const settlementsByCell = useMemo(() => getSettlementsByCell(snapshot.settlements.settlements), [snapshot.settlements.settlements]);
   const selectedHuman = selectedHumanId ? snapshot.humans.agents.find((human) => human.id === selectedHumanId) ?? null : null;
   const autoOverlayMask = useMemo(() => createAutoOverlayMask(snapshot.grid.totalCells, view.scale), [snapshot.grid.totalCells, view.scale]);
   const activeVisualMode = VISUAL_MODE_OPTIONS.find((mode) => mode.id === visualMode) ?? VISUAL_MODE_OPTIONS[0];
@@ -3213,22 +3253,85 @@ export function WorldMapAtlasClient({
   const activeStatistics = getLayerStatistics(snapshot, selectedLayerId);
   const legendItems = getLegendItems(snapshot, selectedLayerId);
   const inspectorCell = selectedCell;
+  const systemSignals = [
+    snapshot.integrity.terrainValidated,
+    snapshot.integrity.climateValidated,
+    snapshot.integrity.hydrologyValidated,
+    snapshot.integrity.atmosphereValidated,
+    snapshot.integrity.weatherValidated,
+  ];
+  const activeSystemCount = systemSignals.filter(Boolean).length;
+  const formatObservatorySignal = (value: string | number | null | undefined) => {
+    if (value === null || value === undefined) {
+      return "Pending signal";
+    }
+
+    const text = String(value).trim();
+    return text.length > 0 ? text : "Pending signal";
+  };
+  const observatorySignals = [
+    {
+      label: "World Seed",
+      value: formatObservatorySignal(snapshot.fingerprint.seed),
+    },
+    {
+      label: "Total Cells",
+      value: snapshot.grid.totalCells > 0
+        ? `${formatNumber(snapshot.grid.totalCells, 0)} cells`
+        : "Pending signal",
+    },
+    {
+      label: "Active Systems",
+      value: `${activeSystemCount} / ${systemSignals.length} validated`,
+    },
+    {
+      label: "Current Tick",
+      value: formatObservatorySignal(health?.currentTick ?? snapshot.tick),
+    },
+    {
+      label: "Citizen Status",
+      value: "Not Yet Active",
+    },
+  ];
   return (
     <main className="min-h-screen bg-[#060708] px-4 py-6 text-stone-100 md:px-6 lg:px-8">
       <div className="mx-auto flex max-w-[1800px] flex-col gap-6">
-        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(255,210,113,0.18),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(78,123,183,0.22),_transparent_34%),linear-gradient(180deg,_rgba(255,255,255,0.06),_rgba(255,255,255,0.02))] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(216,173,95,0.2),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(78,123,183,0.16),_transparent_34%),linear-gradient(180deg,_rgba(255,255,255,0.055),_rgba(255,255,255,0.018))] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.55)] sm:p-8">
+          <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
             <SectionHeading
-              eyebrow="Developer Atlas"
-              title="Planet Visualization Engine"
-              description="Inspect every deterministic simulation layer directly on the planetary grid. The atlas only visualizes existing simulation output and recomputes seasonal snapshots through the current engines."
+              eyebrow="First Dawn Observatory"
+              title="FIRST DAWN ATLAS"
+              description="A measured view of the world before awakening."
             />
             <div className="flex flex-wrap gap-3">
-              <Link href="/worlds" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:bg-white/10">World Dashboard</Link>
-              <Link href="/worlds/grid" className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:bg-white/10">Grid Inspector</Link>
+              <Link href="/" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">Observatory Home</Link>
+              <Link href="/worlds" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">World Dashboard</Link>
+              <Link href="/worlds/grid" className="inline-flex items-center border border-white/10 bg-white/5 px-4 py-2 text-sm text-stone-200 transition hover:border-amber-300/30 hover:bg-white/10">Grid Inspector</Link>
             </div>
           </div>
 
+          <div className="mt-10 grid gap-px overflow-hidden border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-5">
+            {observatorySignals.map((signal) => (
+              <ObservatorySignalCard key={signal.label} label={signal.label} value={signal.value} />
+            ))}
+          </div>
+
+          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="border border-amber-300/20 bg-amber-300/10 p-5 shadow-[0_20px_48px_rgba(0,0,0,0.28)]">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-200/80">Observation Layer</p>
+              <p className="mt-3 font-[family-name:var(--font-display)] text-2xl leading-tight text-stone-50">
+                This atlas is not a game map. It is an observation layer over a persistent simulation.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-stone-300">
+                The controls below inspect existing simulation snapshots: cells, layers, overlays, timeline state, and measured planetary systems.
+              </p>
+            </div>
+            <div className="border border-white/10 bg-black/25 p-5">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-stone-500">Current Instrument</p>
+              <p className="mt-3 text-lg text-stone-50">{activeVisualMode.label}</p>
+              <p className="mt-2 text-sm leading-6 text-stone-400">{activeViewMode.description}</p>
+            </div>
+          </div>
           <div className="mt-8 grid gap-4 lg:grid-cols-[1.4fr_1fr] xl:grid-cols-[1.8fr_1.1fr]">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <DetailCard label="World" value={snapshot.worldName} />
@@ -3240,6 +3343,7 @@ export function WorldMapAtlasClient({
               <DetailCard label="Status" value={selectedWorld.status} />
               <DetailCard label="Active Overlay" value={selectedLayer.label} />
               <DetailCard label="Humans" value={`${snapshot.humans.agents.length} visible`} />
+              <DetailCard label="Settlements" value={`${snapshot.settlements.activeCount} active`} />
               <DetailCard label="Visual Mode" value={activeVisualMode.label} />
               <DetailCard label="View" value={activeViewMode.label} />
             </div>
@@ -3689,6 +3793,21 @@ export function WorldMapAtlasClient({
                     </div>
                   </div>
 
+                  <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/8 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.28em] text-emerald-200/80">Settlements In Cell</p>
+                    <div className="mt-3 grid gap-3 text-xs text-stone-200">
+                      {(settlementsByCell.get(inspectorCell.id) ?? []).length > 0 ? (settlementsByCell.get(inspectorCell.id) ?? []).map((settlement) => (
+                        <div key={settlement.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                          <p className="text-stone-50">{settlement.name}</p>
+                          <p className="mt-1 text-stone-400">{settlement.type} / {titleize(settlement.status)} / Pop {settlement.population}</p>
+                          <p className="mt-1 text-stone-400">Age {formatNumber(settlement.ageTicks, 0)} ticks / Permanence {formatNumber(settlement.permanence, 3)}</p>
+                          <p className="mt-1 text-stone-400">Resources {Object.entries(settlement.storedResources).filter(([, value]) => value > 0).map(([key, value]) => `${titleize(key)} ${formatNumber(value, 2)}`).join(", ") || "None"}</p>
+                          <p className="mt-1 text-stone-400">Structures {settlement.structures.join(", ") || "None"}</p>
+                          <p className="mt-1 text-stone-400">Events {settlement.majorEvents.slice(-3).map((event) => event.type).join(", ") || "None"}</p>
+                        </div>
+                      )) : <p>No camp or settlement is currently associated with this cell.</p>}
+                    </div>
+                  </div>
                   <div className="space-y-3">
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                       <p className="text-[10px] uppercase tracking-[0.28em] text-stone-500">Planet</p>

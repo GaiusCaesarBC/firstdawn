@@ -1,6 +1,7 @@
 import type { AnimalGridCell } from "../simulation/animal-engine";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
-import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanEmotionState, HumanNeeds, HumanRelationship } from "../simulation/human-types";
+import { getSettlementStateAtTick, type Settlement } from "../simulation/settlement-engine";
+import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship } from "../simulation/human-types";
 import { HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
 import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
 import type {
@@ -206,6 +207,15 @@ export type AtlasHumanAgent = {
   sex: "male" | "female";
   approxAgeYears: number;
   currentCellId: string;
+  previousCellId: string | null;
+  destinationCellId: string | null;
+  movementIntent: string;
+  movementReason: string;
+  lastMovedTick: string | null;
+  recentPath: string[];
+  stuckTicks: number;
+  distanceTraveled: number;
+  explorationCount: number;
   currentAction: string | null;
   needs: HumanNeeds;
   emotions: HumanEmotionState;
@@ -226,14 +236,73 @@ export type AtlasHumanAgent = {
     attraction: number;
     companionship: number;
   } | null;
+  closestRelationships: AtlasHumanRelationshipSummary[];
+  trustedHumans: AtlasHumanRelationshipSummary[];
+  fearedHumans: AtlasHumanRelationshipSummary[];
+  rivals: AtlasHumanRelationshipSummary[];
+  family: AtlasHumanRelationshipSummary[];
+  relationshipCount: number;
+  strongestBond: AtlasHumanRelationshipSummary | null;
+  recentRelationshipChanges: AtlasHumanSocialHistoryEntry[];
+  socialHistory: AtlasHumanSocialHistoryEntry[];
   decisionExplanation?: string | null;
-  currentGoal?: string | null;
-  relationshipToOther: HumanRelationship | null;
-  latestMemory: {
-    tick: string;
-    eventType: string;
-    summary: string;
+  currentGoal?: {
+    id: string;
+    type: string;
+    priority: number;
+    createdTick: string;
+    targetId: string | null;
+    targetCellId: string | null;
+    progress: number;
+    confidence: number;
+    reason: string;
+    status: string;
   } | null;
+  goalPriority?: number | null;
+  goalReason?: string | null;
+  goalAge?: number | null;
+  goalProgress?: number | null;
+  goalHistory?: Array<{
+    tick: string;
+    event: string;
+    type: string;
+    reason: string;
+    priority: number;
+    progress: number;
+    status: string;
+    previousGoalId: string | null;
+  }>;
+  relationshipToOther: HumanRelationship | null;
+  latestMemory: AtlasHumanMemorySummary | null;
+  recentMemories: AtlasHumanMemorySummary[];
+  strongestMemories: AtlasHumanMemorySummary[];
+  mostRecalledMemories: AtlasHumanMemorySummary[];
+  dangerMemories: AtlasHumanMemorySummary[];
+  foodMemories: AtlasHumanMemorySummary[];
+  relationshipMemories: AtlasHumanMemorySummary[];
+  memoryTimeline: AtlasHumanMemorySummary[];
+  memoryCount: number;
+  averageMemoryConfidence: number;
+  averageMemoryImportance: number;
+  knownKnowledge: AtlasHumanKnowledgeSummary[];
+  knowledgeCategories: Array<{ category: string; count: number; averageMastery: number }>;
+  recentlyLearnedKnowledge: AtlasHumanKnowledgeSummary[];
+  recentlyTaughtKnowledge: AtlasHumanKnowledgeSummary[];
+  knowledgeTimeline: AtlasHumanKnowledgeTimelineEntry[];
+  knowledgeCount: number;
+  averageKnowledgeConfidence: number;
+  averageKnowledgeMastery: number;
+  recentCommunications: AtlasHumanCommunicationSummary[];
+  messagesSent: number;
+  messagesReceived: number;
+  mostCommonCommunicationTypes: Array<{ type: string; count: number }>;
+  trustedTeachers: Array<{ humanId: string; acceptedTeachings: number }>;
+  peopleFrequentlyContacted: Array<{ humanId: string; count: number }>;
+  communicationSuccessRate: number;
+  ignoredMessages: AtlasHumanCommunicationSummary[];
+  teachingHistory: AtlasHumanCommunicationSummary[];
+  warningHistory: AtlasHumanCommunicationSummary[];
+  communicationTimeline: AtlasHumanCommunicationSummary[];
   latestCausalEvent: {
     tick: string;
     type: string;
@@ -244,6 +313,153 @@ export type AtlasHumanAgent = {
   emotionReasons: AtlasHumanEmotionReason[];
 };
 
+export type AtlasHumanRelationshipSummary = {
+  humanId: string;
+  targetHumanId: string;
+  status: string;
+  kinship: string;
+  familiarity: number;
+  trust: number;
+  affection: number;
+  fear: number;
+  respect: number;
+  rivalry: number;
+  dependency: number;
+  grief: number;
+  socialMemoryScore: number;
+  strongestScore: number;
+  tags: string[];
+  lastInteractionTick: string | null;
+};
+
+export type AtlasHumanSocialHistoryEntry = {
+  tick: string;
+  type: string;
+  summary: string;
+  targetHumanId: string | null;
+  status?: string;
+};
+
+export type AtlasHumanMemorySummary = {
+  id: string;
+  tick: string;
+  type: string;
+  category: string;
+  eventType: string;
+  summary: string;
+  locationCellId: string;
+  importance: number;
+  confidence: number;
+  emotionalWeight: number;
+  recallCount: number;
+  exposureCount: number;
+  tags: string[];
+};
+
+export type AtlasHumanKnowledgeSummary = {
+  id: string;
+  topic: string;
+  category: string;
+  discoveredTick: string;
+  learnedTick: string;
+  sourceType: string;
+  sourceHumanId: string | null;
+  originatingHumanId: string;
+  confidence: number;
+  mastery: number;
+  reliability: number;
+  practiceCount: number;
+  teachingCount: number;
+  lastUsedTick: string | null;
+  lastTaughtTick: string | null;
+  importance: number;
+  teacher: string | null;
+  students: string[];
+  tags: string[];
+};
+
+export type AtlasHumanKnowledgeTimelineEntry = {
+  tick: string;
+  event: string;
+  topic: string;
+  category: string;
+  summary: string;
+  confidence: number;
+  mastery: number;
+  sourceHumanId: string | null;
+};
+export type AtlasHumanCommunicationSummary = {
+  id: string;
+  tick: string;
+  senderHumanId: string;
+  receiverHumanIds: string[];
+  type: string;
+  topic: string;
+  method: string;
+  urgency: number;
+  clarity: number;
+  confidence: number;
+  emotionalWeight: number;
+  understood: boolean;
+  accepted: boolean;
+  successRate: number;
+  ignoredCount: number;
+  tags: string[];
+};
+export type AtlasSettlementSummary = {
+  id: string;
+  name: string;
+  foundedTick: string;
+  population: number;
+  peakPopulation: number;
+  ageTicks: number;
+  homeCellId: string;
+  occupiedCells: string[];
+  type: string;
+  status: string;
+  importance: number;
+  permanence: number;
+  founders: string[];
+  currentResidents: string[];
+  structures: string[];
+  storedResources: Settlement["storedResources"];
+  culturalTraits: string[];
+  knownKnowledge: Settlement["knowledgeSummary"];
+  relationships: Settlement["relationshipGraph"];
+  majorEvents: Settlement["history"];
+  births: Settlement["history"];
+  deaths: Settlement["history"];
+  growthTimeline: Settlement["history"];
+  nearbyResources: string[];
+  seasonalStatus: string;
+  discoveryHistory: Settlement["discoveryHistory"];
+  tags: string[];
+};
+
+export type AtlasSettlements = {
+  tick: string;
+  settlements: AtlasSettlementSummary[];
+  activeCount: number;
+  abandonedCount: number;
+  firstSettlement: AtlasSettlementSummary | null;
+  recentEvents: Array<{
+    id: string;
+    tick: string;
+    settlementId: string;
+    kind: string;
+    title: string;
+    summary: string;
+    importance: number;
+    cellId: string;
+  }>;
+  scoring: Array<{
+    cellId: string;
+    score: number;
+    permanence: number;
+    population: number;
+    reasons: Record<string, number>;
+  }>;
+};
 export type AtlasHumanMva = {
   tick: string;
   agents: AtlasHumanAgent[];
@@ -320,6 +536,7 @@ export type AtlasSnapshot = {
   resourceSummary: PlanetResourceSummary;
   statistics: AtlasStatistics;
   humans: AtlasHumanMva;
+  settlements: AtlasSettlements;
   fingerprint: Pick<WorldFingerprint, "seed" | "hash" | "shortHash" | "canonical">;
   integrity: {
     canonical: boolean;
@@ -350,6 +567,16 @@ function round(value: number, digits = 6): number {
   return Object.is(value, -0) ? 0 : Math.round(value * factor) / factor;
 }
 
+function titleize(value: string): string {
+  return value
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[-_\s]+/g, " ")
+    .trim()
+    .toLowerCase()
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 function getConfiguredYearLengthDays(world: WorldWithPlanet): number {
   return Math.max(
     1,
@@ -780,6 +1007,371 @@ function latestEmotionChangeSummary(reasons: readonly AtlasHumanEmotionReason[])
   return latestChange?.summary ?? "No tracked emotion changed during the latest day.";
 }
 
+function averageMemoryValue(memories: readonly HumanMemory[], key: "confidence" | "importance"): number {
+  if (memories.length === 0) {
+    return 0;
+  }
+
+  return round(memories.reduce((sum, memory) => sum + memory[key], 0) / memories.length);
+}
+
+function averageKnowledgeValue(knowledge: readonly HumanKnowledge[], key: "confidence" | "mastery"): number {
+  if (knowledge.length === 0) {
+    return 0;
+  }
+
+  return round(knowledge.reduce((sum, entry) => sum + entry[key], 0) / knowledge.length);
+}
+
+function knowledgeSummary(
+  knowledge: HumanKnowledge,
+  displayId: (sourceId: string) => string,
+  normalizeHumanTextIds: (value: string) => string,
+): AtlasHumanKnowledgeSummary {
+  return {
+    id: normalizeHumanTextIds(knowledge.id),
+    topic: normalizeHumanTextIds(knowledge.topic),
+    category: knowledge.category,
+    discoveredTick: knowledge.discoveredTick,
+    learnedTick: knowledge.learnedTick,
+    sourceType: knowledge.sourceType,
+    sourceHumanId: knowledge.sourceHumanId ? displayId(knowledge.sourceHumanId) : null,
+    originatingHumanId: displayId(knowledge.originatingHumanId),
+    confidence: knowledge.confidence,
+    mastery: knowledge.mastery,
+    reliability: knowledge.reliability,
+    practiceCount: knowledge.practiceCount,
+    teachingCount: knowledge.teachingCount,
+    lastUsedTick: knowledge.lastUsedTick,
+    lastTaughtTick: knowledge.lastTaughtTick,
+    importance: knowledge.importance,
+    teacher: knowledge.sourceHumanId ? displayId(knowledge.sourceHumanId) : null,
+    students: knowledge.learnerHumanIds.map(displayId),
+    tags: [...knowledge.tags],
+  };
+}
+
+function topKnowledgeSummaries(
+  knowledge: readonly HumanKnowledge[],
+  displayId: (sourceId: string) => string,
+  normalizeHumanTextIds: (value: string) => string,
+  sortBy: "recent" | "mastery" | "taught" = "mastery",
+  limit = 6,
+): AtlasHumanKnowledgeSummary[] {
+  const sorted = [...knowledge].sort((left, right) => {
+    if (sortBy === "recent") {
+      return Number(BigInt(right.learnedTick) - BigInt(left.learnedTick)) || left.id.localeCompare(right.id);
+    }
+
+    if (sortBy === "taught") {
+      return Number(BigInt(right.lastTaughtTick ?? "0") - BigInt(left.lastTaughtTick ?? "0")) || right.teachingCount - left.teachingCount || left.id.localeCompare(right.id);
+    }
+
+    return right.mastery - left.mastery || right.confidence - left.confidence || right.importance - left.importance || left.id.localeCompare(right.id);
+  });
+
+  return sorted.slice(0, limit).map((entry) => knowledgeSummary(entry, displayId, normalizeHumanTextIds));
+}
+
+function knowledgeCategorySummaries(knowledge: readonly HumanKnowledge[]): Array<{ category: string; count: number; averageMastery: number }> {
+  const byCategory = new Map<string, HumanKnowledge[]>();
+
+  for (const entry of knowledge) {
+    byCategory.set(entry.category, [...(byCategory.get(entry.category) ?? []), entry]);
+  }
+
+  return [...byCategory.entries()]
+    .map(([category, entries]) => ({ category, count: entries.length, averageMastery: averageKnowledgeValue(entries, "mastery") }))
+    .sort((left, right) => right.count - left.count || left.category.localeCompare(right.category));
+}
+
+function communicationSuccessRate(communications: readonly HumanCommunicationRecord[]): number {
+  const receptions = communications.flatMap((communication) => communication.receptions);
+
+  if (receptions.length === 0) {
+    return 0;
+  }
+
+  return round(receptions.filter((reception) => reception.accepted).length / receptions.length);
+}
+
+function communicationSummary(
+  communication: HumanCommunicationRecord,
+  displayId: (sourceId: string) => string,
+  normalizeHumanTextIds: (value: string) => string,
+): AtlasHumanCommunicationSummary {
+  return {
+    id: normalizeHumanTextIds(communication.id),
+    tick: communication.tick,
+    senderHumanId: displayId(communication.senderHumanId),
+    receiverHumanIds: communication.receiverHumanIds.map(displayId),
+    type: communication.type,
+    topic: normalizeHumanTextIds(communication.topic),
+    method: communication.communicationMethod,
+    urgency: communication.urgency,
+    clarity: communication.clarity,
+    confidence: communication.confidence,
+    emotionalWeight: communication.emotionalWeight,
+    understood: communication.understood,
+    accepted: communication.accepted,
+    successRate: communicationSuccessRate([communication]),
+    ignoredCount: communication.receptions.filter((reception) => reception.ignored).length,
+    tags: [...communication.tags],
+  };
+}
+
+function topCommunicationSummaries(
+  communications: readonly HumanCommunicationRecord[],
+  displayId: (sourceId: string) => string,
+  normalizeHumanTextIds: (value: string) => string,
+  sortBy: "recent" | "urgency" = "recent",
+  limit = 6,
+): AtlasHumanCommunicationSummary[] {
+  const sorted = [...communications].sort((left, right) => {
+    if (sortBy === "urgency") {
+      return right.urgency - left.urgency || right.emotionalWeight - left.emotionalWeight || left.id.localeCompare(right.id);
+    }
+
+    return Number(BigInt(right.tick) - BigInt(left.tick)) || left.id.localeCompare(right.id);
+  });
+
+  return sorted.slice(0, limit).map((communication) => communicationSummary(communication, displayId, normalizeHumanTextIds));
+}
+
+function commonCommunicationTypes(communications: readonly HumanCommunicationRecord[]): Array<{ type: string; count: number }> {
+  const counts = new Map<string, number>();
+
+  for (const communication of communications) {
+    counts.set(communication.type, (counts.get(communication.type) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([type, count]) => ({ type, count }))
+    .sort((left, right) => right.count - left.count || left.type.localeCompare(right.type))
+    .slice(0, 5);
+}
+
+function frequentContacts(communications: readonly HumanCommunicationRecord[], agentId: string, displayId: (sourceId: string) => string): Array<{ humanId: string; count: number }> {
+  const counts = new Map<string, number>();
+
+  for (const communication of communications) {
+    if (communication.senderHumanId === agentId) {
+      for (const receiverId of communication.receiverHumanIds) {
+        counts.set(receiverId, (counts.get(receiverId) ?? 0) + 1);
+      }
+    } else if (communication.receiverHumanIds.includes(agentId)) {
+      counts.set(communication.senderHumanId, (counts.get(communication.senderHumanId) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([humanId, count]) => ({ humanId: displayId(humanId), count }))
+    .sort((left, right) => right.count - left.count || left.humanId.localeCompare(right.humanId))
+    .slice(0, 5);
+}
+
+function trustedTeachers(communications: readonly HumanCommunicationRecord[], agentId: string, displayId: (sourceId: string) => string): Array<{ humanId: string; acceptedTeachings: number }> {
+  const counts = new Map<string, number>();
+
+  for (const communication of communications) {
+    if (communication.type !== "Teaching" || !communication.receiverHumanIds.includes(agentId)) {
+      continue;
+    }
+
+    const accepted = communication.receptions.some((reception) => reception.receiverHumanId === agentId && reception.accepted);
+    if (accepted) {
+      counts.set(communication.senderHumanId, (counts.get(communication.senderHumanId) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([humanId, acceptedTeachings]) => ({ humanId: displayId(humanId), acceptedTeachings }))
+    .sort((left, right) => right.acceptedTeachings - left.acceptedTeachings || left.humanId.localeCompare(right.humanId))
+    .slice(0, 5);
+}
+function memorySummary(memory: HumanMemory, normalizeHumanTextIds: (value: string) => string): AtlasHumanMemorySummary {
+  return {
+    id: normalizeHumanTextIds(memory.id),
+    tick: memory.createdTick,
+    type: memory.type,
+    category: memory.category,
+    eventType: memory.eventType,
+    summary: normalizeHumanTextIds(memory.summary),
+    locationCellId: memory.locationCellId,
+    importance: memory.importance,
+    confidence: memory.confidence,
+    emotionalWeight: memory.emotionalWeight,
+    recallCount: memory.recallCount,
+    exposureCount: memory.exposureCount,
+    tags: [...memory.tags],
+  };
+}
+
+function topMemorySummaries(
+  memories: readonly HumanMemory[],
+  normalizeHumanTextIds: (value: string) => string,
+  sortBy: "recent" | "importance" | "recall" = "recent",
+  limit = 5,
+): AtlasHumanMemorySummary[] {
+  const sorted = [...memories].sort((left, right) => {
+    if (sortBy === "importance") {
+      return right.importance - left.importance || right.confidence - left.confidence || left.id.localeCompare(right.id);
+    }
+
+    if (sortBy === "recall") {
+      return right.recallCount - left.recallCount || right.importance - left.importance || left.id.localeCompare(right.id);
+    }
+
+    return Number(BigInt(right.createdTick) - BigInt(left.createdTick)) || left.id.localeCompare(right.id);
+  });
+
+  return sorted.slice(0, limit).map((memory) => memorySummary(memory, normalizeHumanTextIds));
+}
+
+function relationshipStrength(relationship: HumanRelationship): number {
+  return Math.round(Math.max(
+    relationship.trust + relationship.affection + relationship.familiarity,
+    relationship.fear + relationship.rivalry,
+    relationship.respect + relationship.dependency,
+    relationship.socialMemoryScore,
+  ) * 1_000_000) / 1_000_000;
+}
+
+function relationshipSummary(
+  relationship: HumanRelationship,
+  displayId: (sourceId: string) => string,
+): AtlasHumanRelationshipSummary {
+  return {
+    humanId: displayId(relationship.humanId ?? relationship.fromAgentId),
+    targetHumanId: displayId(relationship.targetHumanId ?? relationship.toAgentId),
+    status: relationship.status,
+    kinship: relationship.kinship,
+    familiarity: relationship.familiarity,
+    trust: relationship.trust,
+    affection: relationship.affection,
+    fear: relationship.fear,
+    respect: relationship.respect,
+    rivalry: relationship.rivalry,
+    dependency: relationship.dependency,
+    grief: relationship.grief,
+    socialMemoryScore: relationship.socialMemoryScore,
+    strongestScore: relationshipStrength(relationship),
+    tags: [...relationship.tags],
+    lastInteractionTick: relationship.lastInteractionTick,
+  };
+}
+
+function topRelationships(
+  relationships: readonly HumanRelationship[],
+  displayId: (sourceId: string) => string,
+  sortBy: "closest" | "trust" | "fear" | "rivalry" | "family" = "closest",
+  limit = 5,
+): AtlasHumanRelationshipSummary[] {
+  const filtered = relationships.filter((relationship) => sortBy !== "family" || relationship.status === "Family" || relationship.kinship !== "none");
+  const sorted = [...filtered].sort((left, right) => {
+    if (sortBy === "trust") {
+      return right.trust - left.trust || right.affection - left.affection || left.targetHumanId.localeCompare(right.targetHumanId);
+    }
+
+    if (sortBy === "fear") {
+      return right.fear - left.fear || right.rivalry - left.rivalry || left.targetHumanId.localeCompare(right.targetHumanId);
+    }
+
+    if (sortBy === "rivalry") {
+      return right.rivalry - left.rivalry || right.fear - left.fear || left.targetHumanId.localeCompare(right.targetHumanId);
+    }
+
+    if (sortBy === "family") {
+      return right.affection - left.affection || right.trust - left.trust || left.targetHumanId.localeCompare(right.targetHumanId);
+    }
+
+    return relationshipStrength(right) - relationshipStrength(left) || left.targetHumanId.localeCompare(right.targetHumanId);
+  });
+
+  return sorted.slice(0, limit).map((relationship) => relationshipSummary(relationship, displayId));
+}
+
+function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): AtlasSettlements {
+  const dayEndTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const currentHumanResult = getHumanMvaStateAtTick(world, dayEndTick);
+  const previousHumanResult = dayEndTick > 0n ? getHumanMvaStateAtTick(world, dayEndTick - 1n) : null;
+  const result = getSettlementStateAtTick({
+    world,
+    tick: dayEndTick,
+    humanResult: currentHumanResult,
+    previousHumanResult,
+  });
+  const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
+  const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
+  const residentsByCell = new Map<string, string[]>();
+
+  for (const agent of currentHumanResult.state.agents) {
+    const cells = new Set([agent.currentCellId, agent.homeCellId, agent.homeProfile.primaryHomeCellId]);
+    for (const cellId of cells) {
+      residentsByCell.set(cellId, [...(residentsByCell.get(cellId) ?? []), displayId(agent.id)].sort());
+    }
+  }
+
+  const settlements = result.settlements.map((settlement) => {
+    const majorEvents = settlement.history.filter((entry) => entry.importance >= 0.5 || entry.type.includes("Camp") || entry.type.includes("Fire") || entry.type.includes("Food"));
+    const resources = Object.entries(settlement.storedResources)
+      .filter(([, value]) => value > 0)
+      .map(([key]) => titleize(key));
+
+    return {
+      id: settlement.id.replace(`${world.id}:`, ""),
+      name: settlement.name,
+      foundedTick: settlement.foundedTick,
+      population: settlement.currentPopulation,
+      peakPopulation: settlement.peakPopulation,
+      ageTicks: Math.max(0, Number(dayEndTick - BigInt(settlement.foundedTick))),
+      homeCellId: settlement.homeCellId,
+      occupiedCells: settlement.occupiedCells,
+      type: settlement.type,
+      status: settlement.status,
+      importance: settlement.importance,
+      permanence: settlement.permanence,
+      founders: settlement.founderIds.map(displayId),
+      currentResidents: residentsByCell.get(settlement.homeCellId) ?? [],
+      structures: settlement.structures,
+      storedResources: settlement.storedResources,
+      culturalTraits: settlement.culturalTraits,
+      knownKnowledge: settlement.knowledgeSummary,
+      relationships: settlement.relationshipGraph.map((edge) => ({
+        ...edge,
+        fromHumanId: displayId(edge.fromHumanId),
+        toHumanId: displayId(edge.toHumanId),
+      })),
+      majorEvents,
+      births: settlement.history.filter((entry) => entry.type.includes("Birth")),
+      deaths: settlement.history.filter((entry) => entry.type.includes("Death")),
+      growthTimeline: settlement.history.filter((entry) => entry.type.includes("Population") || entry.type.includes("Expanded") || entry.type.includes("Founded")),
+      nearbyResources: resources,
+      seasonalStatus: settlement.status === "seasonal" ? "Revisited seasonally" : settlement.status === "permanent" ? "Permanent" : titleize(settlement.status),
+      discoveryHistory: settlement.discoveryHistory.map((entry) => ({ ...entry, humanId: displayId(entry.humanId) })),
+      tags: settlement.tags,
+    } satisfies AtlasSettlementSummary;
+  });
+
+  return {
+    tick: result.tick,
+    settlements,
+    activeCount: settlements.filter((settlement) => settlement.status !== "abandoned").length,
+    abandonedCount: settlements.filter((settlement) => settlement.status === "abandoned").length,
+    firstSettlement: settlements[0] ?? null,
+    recentEvents: result.events.slice(-8).map((event) => ({
+      id: event.id.replace(`${world.id}:`, ""),
+      tick: event.tick,
+      settlementId: event.settlementId.replace(`${world.id}:`, ""),
+      kind: event.kind,
+      title: event.title,
+      summary: event.summary,
+      importance: event.importance,
+      cellId: event.cellId,
+    })),
+    scoring: result.scoring.slice(0, 12),
+  };
+}
 function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHumanMva {
   const dayEndTick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
   const dayStartTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
@@ -807,13 +1399,82 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
           relationship.fromAgentId === agent.id && relationship.toAgentId === otherAgent.id,
         ) ?? null
         : null;
-      const latestMemory = [...result.state.memories]
-        .reverse()
-        .find((memory) => memory.agentId === agent.id) ?? null;
+      const agentRelationships = result.state.relationships.filter((relationship) =>
+        (relationship.humanId ?? relationship.fromAgentId) === agent.id,
+      );
+      const closestRelationships = topRelationships(agentRelationships, displayId, "closest", 5);
+      const trustedHumans = topRelationships(agentRelationships.filter((relationship) => relationship.trust >= 0.5), displayId, "trust", 5);
+      const fearedHumans = topRelationships(agentRelationships.filter((relationship) => relationship.fear >= 0.35 || relationship.status === "Threat"), displayId, "fear", 5);
+      const rivals = topRelationships(agentRelationships.filter((relationship) => relationship.rivalry >= 0.25 || relationship.status === "Rival"), displayId, "rivalry", 5);
+      const family = topRelationships(agentRelationships, displayId, "family", 5);
+      const strongestBond = closestRelationships[0] ?? null;
+      const agentMemories = result.state.memories.filter((memory) => memory.agentId === agent.id);
+      const latestMemory = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recent", 1)[0] ?? null;
+      const recentMemories = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recent", 5);
+      const strongestMemories = topMemorySummaries(agentMemories, normalizeHumanTextIds, "importance", 5);
+      const mostRecalledMemories = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recall", 5);
+      const dangerMemories = topMemorySummaries(agentMemories.filter((memory) => memory.tags.includes("danger")), normalizeHumanTextIds, "importance", 5);
+      const foodMemories = topMemorySummaries(agentMemories.filter((memory) => memory.tags.includes("food")), normalizeHumanTextIds, "importance", 5);
+      const relationshipMemories = topMemorySummaries(agentMemories.filter((memory) => memory.tags.includes("relationship")), normalizeHumanTextIds, "importance", 5);
+      const memoryTimeline = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recent", 12).reverse();
+      const agentKnowledge = result.state.knowledge.filter((entry) => entry.agentId === agent.id && !entry.isForgotten);
+      const knownKnowledge = topKnowledgeSummaries(agentKnowledge, displayId, normalizeHumanTextIds, "mastery", 8);
+      const recentlyLearnedKnowledge = topKnowledgeSummaries(agentKnowledge, displayId, normalizeHumanTextIds, "recent", 6);
+      const recentlyTaughtKnowledge = topKnowledgeSummaries(agentKnowledge.filter((entry) => entry.lastTaughtTick), displayId, normalizeHumanTextIds, "taught", 6);
+      const knowledgeTimeline = agentKnowledge
+        .flatMap((entry) => entry.history.map((history) => ({
+          tick: history.tick,
+          event: history.event,
+          topic: normalizeHumanTextIds(entry.topic),
+          category: entry.category,
+          summary: normalizeHumanTextIds(history.summary),
+          confidence: history.confidence,
+          mastery: history.mastery,
+          sourceHumanId: history.sourceHumanId ? displayId(history.sourceHumanId) : null,
+        })))
+        .sort((left, right) => Number(BigInt(right.tick) - BigInt(left.tick)) || left.topic.localeCompare(right.topic))
+        .slice(0, 12)
+        .reverse();
+      const agentCommunications = result.state.communications.filter((communication) =>
+        communication.senderHumanId === agent.id || communication.receiverHumanIds.includes(agent.id),
+      );
+      const sentCommunications = result.state.communications.filter((communication) => communication.senderHumanId === agent.id);
+      const receivedCommunications = result.state.communications.filter((communication) => communication.receiverHumanIds.includes(agent.id));
+      const ignoredCommunications = receivedCommunications.filter((communication) =>
+        communication.receptions.some((reception) => reception.receiverHumanId === agent.id && reception.ignored),
+      );
+      const teachingCommunications = agentCommunications.filter((communication) => communication.type === "Teaching");
+      const warningCommunications = agentCommunications.filter((communication) => communication.type === "Warning" || communication.type === "Danger");
+      const recentCommunications = topCommunicationSummaries(agentCommunications, displayId, normalizeHumanTextIds, "recent", 6);
+      const communicationTimeline = topCommunicationSummaries(agentCommunications, displayId, normalizeHumanTextIds, "recent", 12).reverse();
       const latestCausalEvent = [...result.state.causalEvents]
         .reverse()
         .find((event) => event.agentIds.includes(agent.id)) ?? null;
       const agentDayEvents = latestDayEvents.filter((event) => event.agentIds.includes(agent.id));
+      const relationshipChangeEvents = [...result.state.causalEvents]
+        .filter((event) => event.type === "Human Relationship Event" && event.agentIds.includes(agent.id))
+        .sort((left, right) => Number(BigInt(right.tick) - BigInt(left.tick)) || left.id.localeCompare(right.id));
+      const recentRelationshipChanges = relationshipChangeEvents.slice(0, 6).map((event) => {
+        const targetHumanId = event.agentIds.find((agentId) => agentId !== agent.id) ?? null;
+
+        return {
+          tick: event.tick,
+          type: event.title,
+          summary: normalizeHumanTextIds(event.summary),
+          targetHumanId: targetHumanId ? displayId(targetHumanId) : null,
+          status: typeof event.effects.status === "string" ? event.effects.status : undefined,
+        };
+      });
+      const socialHistory = [
+        ...agentRelationships.flatMap((relationship) => relationship.history.map((entry) => ({
+          tick: entry.tick,
+          type: entry.event,
+          summary: normalizeHumanTextIds(entry.summary),
+          targetHumanId: displayId(relationship.targetHumanId ?? relationship.toAgentId),
+          status: relationship.status,
+        }))),
+        ...recentRelationshipChanges,
+      ].sort((left, right) => Number(BigInt(right.tick) - BigInt(left.tick)) || left.type.localeCompare(right.type)).slice(0, 10);
       const emotionReasons = buildHumanEmotionReasons(
         dayStartAgentById.get(agent.id) ?? agent,
         agent,
@@ -827,6 +1488,15 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
         sex: agent.sex,
         approxAgeYears: agent.approxAgeYears,
         currentCellId: agent.currentCellId,
+        previousCellId: agent.previousCellId,
+        destinationCellId: agent.destinationCellId,
+        movementIntent: agent.movementIntent,
+        movementReason: agent.movementReason,
+        lastMovedTick: agent.lastMovedTick,
+        recentPath: agent.recentPath,
+        stuckTicks: agent.stuckTicks,
+        distanceTraveled: agent.distanceTraveled,
+        explorationCount: agent.explorationCount,
         currentAction: agent.lastDecision?.action ?? null,
         needs: agent.needs,
         emotions: agent.emotions,
@@ -841,6 +1511,15 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
           attraction: relationshipToOther.attraction,
           companionship: relationshipToOther.companionship,
         } : null,
+        closestRelationships,
+        trustedHumans,
+        fearedHumans,
+        rivals,
+        family,
+        relationshipCount: agentRelationships.length,
+        strongestBond,
+        recentRelationshipChanges,
+        socialHistory,
         decisionExplanation: (() => {
           const causes = agent.lastDecision?.causes ?? {} as Record<string, unknown>;
           const parts: string[] = [];
@@ -863,20 +1542,77 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
           }
           return parts.length ? parts.join(" ") : null;
         })(),
-        currentGoal: (agent as any).currentGoal?.text ?? null,
+        currentGoal: agent.currentGoal
+          ? {
+            id: normalizeHumanTextIds(agent.currentGoal.id),
+            type: agent.currentGoal.type,
+            priority: agent.currentGoal.priority,
+            createdTick: agent.currentGoal.createdTick,
+            targetId: agent.currentGoal.targetId ? displayId(agent.currentGoal.targetId) : null,
+            targetCellId: agent.currentGoal.targetCellId,
+            progress: agent.currentGoal.progress,
+            confidence: agent.currentGoal.confidence,
+            reason: agent.currentGoal.reason,
+            status: agent.currentGoal.status,
+          }
+          : null,
+        goalPriority: agent.currentGoal?.priority ?? null,
+        goalReason: agent.currentGoal?.reason ?? null,
+        goalAge: agent.currentGoal ? Number(BigInt(result.state.tick) - BigInt(agent.currentGoal.createdTick)) : null,
+        goalProgress: agent.currentGoal?.progress ?? null,
+        goalHistory: agent.goalHistory.slice(-8).map((entry) => ({
+          tick: entry.tick,
+          event: entry.event,
+          type: entry.goal.type,
+          reason: entry.reason,
+          priority: entry.goal.priority,
+          progress: entry.goal.progress,
+          status: entry.goal.status,
+          previousGoalId: entry.previousGoalId ? normalizeHumanTextIds(entry.previousGoalId) : null,
+        })),
         relationshipToOther: relationshipToOther ? {
           ...relationshipToOther,
           worldId: "atlas-human-mva",
+          humanId: displayId(relationshipToOther.humanId ?? relationshipToOther.fromAgentId),
+          targetHumanId: displayId(relationshipToOther.targetHumanId ?? relationshipToOther.toAgentId),
           fromAgentId: displayId(relationshipToOther.fromAgentId),
           toAgentId: displayId(relationshipToOther.toAgentId),
+          history: relationshipToOther.history.map((entry) => ({
+            ...entry,
+            summary: normalizeHumanTextIds(entry.summary),
+            sourceEventId: entry.sourceEventId ? normalizeHumanTextIds(entry.sourceEventId) : null,
+          })),
         } : null,
-        latestMemory: latestMemory
-          ? {
-            tick: latestMemory.tick,
-            eventType: latestMemory.eventType,
-            summary: normalizeHumanTextIds(latestMemory.summary),
-          }
-          : null,
+        latestMemory,
+        recentMemories,
+        strongestMemories,
+        mostRecalledMemories,
+        dangerMemories,
+        foodMemories,
+        relationshipMemories,
+        memoryTimeline,
+        memoryCount: agentMemories.length,
+        averageMemoryConfidence: averageMemoryValue(agentMemories, "confidence"),
+        averageMemoryImportance: averageMemoryValue(agentMemories, "importance"),
+        knownKnowledge,
+        knowledgeCategories: knowledgeCategorySummaries(agentKnowledge),
+        recentlyLearnedKnowledge,
+        recentlyTaughtKnowledge,
+        knowledgeTimeline,
+        knowledgeCount: agentKnowledge.length,
+        averageKnowledgeConfidence: averageKnowledgeValue(agentKnowledge, "confidence"),
+        averageKnowledgeMastery: averageKnowledgeValue(agentKnowledge, "mastery"),
+        recentCommunications,
+        messagesSent: sentCommunications.length,
+        messagesReceived: receivedCommunications.length,
+        mostCommonCommunicationTypes: commonCommunicationTypes(agentCommunications),
+        trustedTeachers: trustedTeachers(receivedCommunications, agent.id, displayId),
+        peopleFrequentlyContacted: frequentContacts(agentCommunications, agent.id, displayId),
+        communicationSuccessRate: communicationSuccessRate(agentCommunications),
+        ignoredMessages: topCommunicationSummaries(ignoredCommunications, displayId, normalizeHumanTextIds, "recent", 6),
+        teachingHistory: topCommunicationSummaries(teachingCommunications, displayId, normalizeHumanTextIds, "recent", 6),
+        warningHistory: topCommunicationSummaries(warningCommunications, displayId, normalizeHumanTextIds, "urgency", 6),
+        communicationTimeline,
         latestCausalEvent: latestCausalEvent
           ? {
             tick: latestCausalEvent.tick,
@@ -901,11 +1637,15 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
     chroniclerEntries: result.chroniclerReport.entries.slice(-8).map((entry) => ({
       ...entry,
       eventId: normalizeHumanTextIds(entry.eventId),
+      title: normalizeHumanTextIds(entry.title),
+      summary: normalizeHumanTextIds(entry.summary),
+      causalSummary: normalizeHumanTextIds(entry.causalSummary),
     })),
     canSimulateOneHumanDay: true,
     forbiddenSystemsImplemented: [],
   };
 }
+
 export function toAtlasWorldOption(world: WorldWithPlanet): AtlasWorldOption {
   return {
     id: world.id,
@@ -983,6 +1723,7 @@ function buildAtlasSnapshotUncached(
       resourceState.summary,
     ),
     humans: buildAtlasHumans(world, normalizedDay),
+    settlements: buildAtlasSettlements(world, normalizedDay),
     fingerprint: {
       seed: fingerprint.seed,
       hash: fingerprint.hash,

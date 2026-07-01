@@ -45,11 +45,84 @@ export type HumanMotivationKey =
 
 export type HumanMotivations = Record<HumanMotivationKey, number>;
 
+export type HumanGoalType =
+  | "Find Food"
+  | "Find Water"
+  | "Rest"
+  | "Return Home"
+  | "Gather Near Camp"
+  | "Defend Camp"
+  | "Seek Shelter"
+  | "Wander"
+  | "Explore"
+  | "Socialize"
+  | "Observe"
+  | "Stay Near Family"
+  | "Help Other"
+  | "Learn"
+  | "Follow"
+  | "Seek Safety"
+  | "Escape";
+
+export type HumanGoalStatus =
+  | "Pending"
+  | "Active"
+  | "Completed"
+  | "Failed"
+  | "Interrupted";
+
+export type HumanGoalReason =
+  | "Hungry"
+  | "Thirst"
+  | "Tired"
+  | "Cold"
+  | "Danger Nearby"
+  | "Following Parent"
+  | "Asked For Help"
+  | "Asked To Follow"
+  | "Asked To Learn"
+  | "Searching For Shelter"
+  | "Curiosity"
+  | "Lonely"
+  | "Staying Oriented"
+  | "Returning Home"
+  | "Camp Comfort"
+  | "Camp Threatened"
+  | "Low Pressure"
+  | "Existing Goal Still Valid";
+
 export type HumanGoal = {
   id: string;
-  text: string;
+  type: HumanGoalType;
+  priority: number;
   createdTick: string;
-  expiresTick: string;
+  targetId: string | null;
+  targetCellId: string | null;
+  progress: number;
+  confidence: number;
+  reason: HumanGoalReason;
+  status: HumanGoalStatus;
+};
+
+export type HumanMovementIntent =
+  | "seek-food"
+  | "seek-water"
+  | "explore"
+  | "avoid-danger"
+  | "return-safe"
+  | "follow-trusted"
+  | "avoid-threat"
+  | "seek-shelter"
+  | "wander"
+  | "stay-near-home"
+  | "rest"
+  | "stay";
+export type HumanGoalHistoryEntry = {
+  goal: HumanGoal;
+  tick: string;
+  event: "Started" | "Completed" | "Failed" | "Interrupted" | "Changed";
+  reason: HumanGoalReason;
+  previousGoalId: string | null;
 };
 
 export type HumanPersonality = {
@@ -89,7 +162,17 @@ export type HumanAgent = {
   ageDays: number;
   approxAgeYears: number;
   currentCellId: string;
+  previousCellId: string | null;
+  destinationCellId: string | null;
+  movementIntent: HumanMovementIntent;
+  movementReason: string;
+  lastMovedTick: string | null;
+  recentPath: string[];
+  stuckTicks: number;
+  distanceTraveled: number;
+  explorationCount: number;
   homeCellId: string;
+  homeProfile: HumanHomeProfile;
   motherId: string | null;
   fatherId: string | null;
   generation: number;
@@ -101,32 +184,180 @@ export type HumanAgent = {
   familiarityByCell: Record<string, number>; // situational familiarity
   safetyStreak: number; // consecutive safe ticks
   currentGoal: HumanGoal | null;
+  goalHistory: HumanGoalHistoryEntry[];
   personality: HumanPersonality;
   beliefs: HumanBeliefDictionary;
   theoryOfMind: Record<string, HumanTheoryOfMindEstimate>;
   lastDecision: HumanDecision | null;
 };
 
+export type HumanHomeProfile = {
+  primaryHomeCellId: string;
+  secondaryHomeCellIds: string[];
+  preferredSleepingCellId: string;
+  knownSafeCellIds: string[];
+  favoriteGatheringCellIds: string[];
+  birthplaceCellId: string;
+  cellAffinities: Record<string, number>;
+  lastUpdatedTick: string;
+};
+
+export type HumanRelationshipStatus =
+  | "Unknown"
+  | "Familiar"
+  | "Friend"
+  | "Family"
+  | "Rival"
+  | "Threat"
+  | "Mentor"
+  | "Dependent"
+  | "Mate";
+
+export type HumanRelationshipHistoryEntry = {
+  tick: string;
+  event: string;
+  summary: string;
+  deltas: Partial<Record<"familiarity" | "trust" | "affection" | "fear" | "respect" | "rivalry" | "dependency" | "grief" | "socialMemoryScore", number>>;
+  sourceEventId: string | null;
+};
+
 export type HumanRelationship = {
   worldId: string;
+  humanId: string;
+  targetHumanId: string;
   fromAgentId: string;
   toAgentId: string;
+  createdTick: string;
   kinship: "none" | "parent" | "child" | "sibling" | "partner";
   familiarity: number;
   trust: number;
   affection: number;
   fear: number;
+  respect: number;
+  rivalry: number;
   resentment: number;
   dependency: number;
+  grief: number;
   attraction: number;
   companionship: number;
+  socialMemoryScore: number;
+  status: HumanRelationshipStatus;
+  tags: string[];
+  history: HumanRelationshipHistoryEntry[];
   lastInteractionTick: string | null;
+};
+
+export type HumanRelationshipSystemEvent = {
+  id: string;
+  worldId: string;
+  tick: string;
+  humanId: string;
+  targetHumanId: string;
+  kind:
+    | "relationship formed"
+    | "trust increased"
+    | "fear increased"
+    | "rivalry increased"
+    | "friendship formed"
+    | "family bond recognized"
+    | "relationship decayed"
+    | "relationship status changed";
+  previousStatus: HumanRelationshipStatus | null;
+  status: HumanRelationshipStatus;
+  summary: string;
+  score: number;
+  sourceEventId: string | null;
+};
+
+export type HumanKnowledgeSourceType =
+  | "personal-discovery"
+  | "observation"
+  | "teaching"
+  | "trial-and-error"
+  | "repeated-experience"
+  | "inherited-family-teaching"
+  | string;
+
+export type HumanKnowledgeHistoryEntry = {
+  tick: string;
+  event: "discovered" | "learned" | "practiced" | "taught" | "reinforced" | "weakened" | "forgotten" | "conflict-shifted";
+  summary: string;
+  confidence: number;
+  mastery: number;
+  sourceHumanId: string | null;
+  sourceEventId: string | null;
+};
+
+export type HumanKnowledge = {
+  id: string;
+  worldId: string;
+  agentId: string;
+  topic: string;
+  category: string;
+  discoveredTick: string;
+  learnedTick: string;
+  sourceType: HumanKnowledgeSourceType;
+  sourceHumanId: string | null;
+  originatingHumanId: string;
+  confidence: number;
+  mastery: number;
+  reliability: number;
+  practiceCount: number;
+  teachingCount: number;
+  learnerHumanIds: string[];
+  lastUsedTick: string | null;
+  lastTaughtTick: string | null;
+  importance: number;
+  isForgotten: boolean;
+  contradicts: string[];
+  tags: string[];
+  history: HumanKnowledgeHistoryEntry[];
+};
+
+export type HumanKnowledgeSystemEvent = {
+  id: string;
+  worldId: string;
+  tick: string;
+  humanId: string;
+  targetHumanId: string | null;
+  knowledgeId: string;
+  topic: string;
+  category: string;
+  kind:
+    | "new discovery"
+    | "knowledge learned"
+    | "knowledge forgotten"
+    | "knowledge taught"
+    | "major invention"
+    | "first teacher"
+    | "first student"
+    | "knowledge spread milestone";
+  summary: string;
+  confidence: number;
+  mastery: number;
+  importance: number;
+  sourceEventId: string | null;
 };
 
 export type HumanMemory = {
   id: string;
   worldId: string;
   agentId: string;
+  type: string;
+  category: string;
+  subjectId: string;
+  locationCellId: string;
+  createdTick: string;
+  lastRecalledTick: string;
+  importance: number;
+  emotionalWeight: number;
+  source: string;
+  relatedEntityId: string | null;
+  relatedHumanId: string | null;
+  tags: string[];
+  notes: string;
+  recallCount: number;
+  exposureCount: number;
   tick: string;
   cellId: string;
   participants: string[];
@@ -141,18 +372,100 @@ export type HumanMemory = {
   causalLinks: string[];
 };
 
+export type HumanMemorySystemEvent = {
+  id: string;
+  worldId: string;
+  tick: string;
+  agentId: string;
+  memoryId: string;
+  memoryType: string;
+  kind: "formed" | "reinforced" | "faded";
+  title: string;
+  summary: string;
+  importance: number;
+  confidence: number;
+  locationCellId: string;
+};
+
 export type HumanCommunicationRecord = {
   id: string;
   worldId: string;
   tick: string;
+  senderHumanId: string;
+  receiverHumanIds: string[];
+  type: string;
+  topic: string;
+  createdTick: string;
+  locationCellId: string;
+  urgency: number;
+  clarity: number;
+  confidence: number;
+  emotionalWeight: number;
+  communicationMethod: string;
+  understood: boolean;
+  accepted: boolean;
+  tags: string[];
+  history: HumanCommunicationHistoryEntry[];
+  receptions: HumanCommunicationReception[];
   speakerAgentId: string;
   listenerAgentIds: string[];
   cellId: string;
   intent: "greet" | "requestHelp" | "offerHelp" | "warn" | "teach";
-  topic: string;
   utteranceMeaning: string;
   emotionalTone: "calm" | "warm" | "urgent" | "distressed";
   understandingScore: number;
+};
+
+export type HumanCommunicationHistoryEntry = {
+  tick: string;
+  event: string;
+  summary: string;
+  receiverHumanId: string | null;
+  understandingScore: number;
+  acceptanceScore: number;
+};
+
+export type HumanCommunicationReception = {
+  receiverHumanId: string;
+  understood: boolean;
+  accepted: boolean;
+  misunderstood: boolean;
+  ignored: boolean;
+  rejected: boolean;
+  storedForLater: boolean;
+  understandingScore: number;
+  acceptanceScore: number;
+  relationshipTrust: number;
+  distanceScore: number;
+  attentionScore: number;
+  stressPenalty: number;
+  goalAlignment: number;
+  outcome: "accepted" | "rejected" | "ignored" | "misunderstood" | "stored-for-later";
+};
+
+export type HumanCommunicationSystemEvent = {
+  id: string;
+  worldId: string;
+  tick: string;
+  communicationId: string;
+  senderHumanId: string;
+  receiverHumanIds: string[];
+  kind:
+    | "communication created"
+    | "communication accepted"
+    | "communication rejected"
+    | "communication ignored"
+    | "communication misunderstood"
+    | "first warning"
+    | "first teaching event"
+    | "first help request"
+    | "first successful group coordination"
+    | "knowledge transmission event";
+  type: string;
+  topic: string;
+  summary: string;
+  successRate: number;
+  importance: number;
 };
 
 export type HumanTeachingRecord = {
@@ -237,6 +550,7 @@ export type HumanMvaState = {
   tick: string;
   agents: HumanAgent[];
   relationships: HumanRelationship[];
+  knowledge: HumanKnowledge[];
   memories: HumanMemory[];
   communications: HumanCommunicationRecord[];
   teachingAttempts: HumanTeachingRecord[];
@@ -246,5 +560,9 @@ export type HumanMvaState = {
 export type HumanTickResult = {
   state: HumanMvaState;
   newEvents: HumanCausalEvent[];
+  memoryEvents: HumanMemorySystemEvent[];
+  relationshipEvents: HumanRelationshipSystemEvent[];
+  knowledgeEvents: HumanKnowledgeSystemEvent[];
+  communicationEvents: HumanCommunicationSystemEvent[];
   chroniclerReport: ChroniclerReport;
 };

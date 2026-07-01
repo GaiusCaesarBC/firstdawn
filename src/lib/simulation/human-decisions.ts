@@ -4,6 +4,7 @@ import type {
   HumanDecision,
   HumanRelationship,
 } from "./human-types";
+import { getActionBiasForGoal } from "./human-goals";
 import { dominantMotivation } from "./human-motivations";
 
 function round(value: number, digits = 6): number {
@@ -160,14 +161,22 @@ export function createActionCandidates(
     },
   ];
 
-  return candidates.map((candidate) => ({
-    ...candidate,
-    expectedUtility: clamp01(candidate.expectedUtility + stableScoreOffset(seed, tick, `${agent.sex}:${candidate.type}`)),
-    causes: {
-      ...candidate.causes,
-      topMotivation: topMotivation.key,
-    },
-  }));
+  return candidates.map((candidate) => {
+    const goalBias = getActionBiasForGoal(agent.currentGoal, candidate.type);
+
+    return {
+      ...candidate,
+      expectedUtility: clamp01(candidate.expectedUtility + goalBias + stableScoreOffset(seed, tick, `${agent.sex}:${candidate.type}`)),
+      causes: {
+        ...candidate.causes,
+        topMotivation: topMotivation.key,
+        activeGoalId: agent.currentGoal?.id ?? "none",
+        activeGoalType: agent.currentGoal?.type ?? "none",
+        activeGoalReason: agent.currentGoal?.reason ?? "none",
+        goalBias,
+      },
+    };
+  });
 }
 
 export function selectHumanDecision(
@@ -197,6 +206,3 @@ export function selectHumanDecision(
     causes: selected.causes,
   };
 }
-
-
-

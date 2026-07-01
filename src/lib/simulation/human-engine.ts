@@ -1,14 +1,18 @@
 import type { Prisma } from "@prisma/client";
 
 import { createChroniclerReport } from "./chronicler";
+import { createHumanCommunication, updateCommunicationEngine } from "./human-communication";
+import { evaluateGoalDecision } from "./human-goals";
 import { createActionCandidates, selectHumanDecision } from "./human-decisions";
-import { createMemoriesForEvent } from "./human-memory";
+import { updateKnowledgeEngine } from "./human-knowledge";
+import { createHumanMemoryIndex, updateEpisodicMemories } from "./human-memory";
+import { buildHumanMovementEnvironment, updateHumanMovements } from "./human-movement";
 import {
   createInitialRelationships,
+  updateRelationshipEngine,
   updateRelationshipForInteraction,
-  tickRelationshipDrift,
 } from "./human-relationships";
-import { computeMotivations, deriveGoal, initialCuriosityProfile, updateCuriosityProfile } from "./human-motivations";
+import { computeMotivations, initialCuriosityProfile, updateCuriosityProfile } from "./human-motivations";
 import {
   FIRST_HUMAN_AGE_YEARS,
   FIRST_HUMAN_START_CELL_ID,
@@ -17,18 +21,23 @@ import {
   type HumanBeliefDictionary,
   type HumanCausalEvent,
   type HumanCommunicationRecord,
+  type HumanCommunicationSystemEvent,
+  type HumanMemorySystemEvent,
   type HumanEmotionState,
+  type HumanKnowledgeSystemEvent,
   type HumanMotivations,
   type HumanMvaState,
   type HumanNeedKey,
   type HumanNeeds,
   type HumanPersonality,
   type HumanRelationship,
+  type HumanRelationshipSystemEvent,
   type HumanTheoryOfMindEstimate,
   type HumanTeachingRecord,
   type HumanTickResult,
 } from "./human-types";
 import { createDeterministicRandom } from "./random";
+import { applyHomeProfilesToAgents, createHomeProfile } from "./settlement-engine";
 
 type HumanWorldSource = {
   id: string;
@@ -140,7 +149,17 @@ function createHumanAgent(
     ageDays,
     approxAgeYears: round(ageDays / 365),
     currentCellId: cellId,
+    previousCellId: null,
+    destinationCellId: cellId,
+    movementIntent: "stay",
+    movementReason: "newly spawned",
+    lastMovedTick: null,
+    recentPath: [cellId],
+    stuckTicks: 0,
+    distanceTraveled: 0,
+    explorationCount: 0,
     homeCellId: cellId,
+    homeProfile: createHomeProfile(cellId, tick),
     motherId: null,
     fatherId: null,
     generation: 0,
@@ -162,6 +181,7 @@ function createHumanAgent(
     familiarityByCell: { [cellId]: 0.5 },
     safetyStreak: 0,
     currentGoal: null,
+    goalHistory: [],
     personality: createPersonality(seed, tick, sex),
     beliefs: initialBeliefs(tick),
     theoryOfMind: {},
@@ -188,6 +208,7 @@ export function spawnFirstTwoHumans(
     memories: [],
     communications: [],
     teachingAttempts: [],
+    knowledge: [],
     causalEvents: [],
   };
 }
@@ -320,7 +341,53 @@ function causalEvent(input: {
   };
 }
 
-function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint): HumanAgent {
+function relationshipSystemEventToCausalEvent(event: HumanRelationshipSystemEvent, agentById: ReadonlyMap<string, HumanAgent>): HumanCausalEvent {
+  const agent = agentById.get(event.humanId);
+
+  return causalEvent({
+    worldId: event.worldId,
+    tick: BigInt(event.tick),
+    type: "Human Relationship Event",
+    title: event.kind,
+    summary: event.summary,
+    agentIds: [event.humanId, event.targetHumanId],
+    cellId: agent?.currentCellId ?? "unknown-cell",
+    causes: {
+      sourceEventId: event.sourceEventId ?? "none",
+      previousStatus: event.previousStatus ?? "none",
+    },
+    effects: {
+      relationshipEventId: event.id,
+      status: event.status,
+      score: event.score,
+    },
+  });
+}
+
+function communicationSystemEventToCausalEvent(event: HumanCommunicationSystemEvent, agents: readonly HumanAgent[]): HumanCausalEvent {
+  const sender = agents.find((agent) => agent.id === event.senderHumanId);
+
+  return causalEvent({
+    worldId: event.worldId,
+    tick: BigInt(event.tick),
+    type: "Human Communication Event",
+    title: event.kind,
+    summary: event.summary,
+    agentIds: [event.senderHumanId, ...event.receiverHumanIds].sort(),
+    cellId: sender?.currentCellId ?? "unknown-cell",
+    causes: {
+      communicationId: event.communicationId,
+      communicationType: event.type,
+      topic: event.topic,
+    },
+    effects: {
+      successRate: event.successRate,
+      importance: event.importance,
+      communicationKind: event.kind,
+    },
+  });
+}
+function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint, seed: string): HumanAgent {
   const target = agent.lastDecision?.targetAgentId
     ? state.agents.find((candidate) => candidate.id === agent.lastDecision?.targetAgentId)
     : undefined;
@@ -461,19 +528,21 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
   }
 
   if (decision.action === "communicate" && target) {
-    const communication: HumanCommunicationRecord = {
-      id: `${agent.worldId}:communication:${tick.toString()}:${agent.id}:${target.id}`,
+    const communication = createHumanCommunication({
       worldId: agent.worldId,
-      tick: tick.toString(),
-      speakerAgentId: agent.id,
-      listenerAgentIds: [target.id],
-      cellId: agent.currentCellId,
-      intent: "greet",
+      seed,
+      tick,
+      sender: agent,
+      receivers: [target],
+      relationships: state.relationships,
+      type: "Greeting",
       topic: "companionship",
-      utteranceMeaning: "I am here with you.",
-      emotionalTone: agent.emotions.distress > 0.55 ? "distressed" : "warm",
-      understandingScore: round(0.62 + agent.personality.sociability * 0.2),
-    };
+      communicationMethod: agent.emotions.distress > 0.55 ? "Cry" : "Vocal Sound",
+      targetMode: "one-citizen",
+      clarity: 0.62 + agent.personality.sociability * 0.16,
+      confidence: 0.62 + agent.personality.sociability * 0.2,
+      emotionalWeight: agent.emotions.distress > 0.55 ? 0.72 : 0.42,
+    });
     const currentRelationship = relationshipFor(state.relationships, agent.id, target.id);
 
     if (currentRelationship) {
@@ -495,6 +564,9 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
       causes: decision.causes,
       effects: {
         communicationId: communication.id,
+        communicationType: communication.type,
+        accepted: communication.accepted,
+        understood: communication.understood,
         listener: target.id,
       },
     }));
@@ -505,7 +577,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
       beliefs: {
         ...agent.beliefs,
         [`communication:${target.id}`]: {
-          claim: "The other human can understand simple spoken intent.",
+          claim: "The other human can understand simple intent.",
           confidence: communication.understandingScore,
           valence: 0.68,
           lastUpdatedTick: tick.toString(),
@@ -520,20 +592,22 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
       confidence: clamp01(agent.confidence + 0.01),
     };
   }
-
   if (decision.action === "teach" && target) {
-    const teaching: HumanTeachingRecord = {
-      id: `${agent.worldId}:teaching:${tick.toString()}:${agent.id}:${target.id}`,
+    const communication = createHumanCommunication({
       worldId: agent.worldId,
-      tick: tick.toString(),
-      teacherAgentId: agent.id,
-      learnerAgentId: target.id,
+      seed,
+      tick,
+      sender: agent,
+      receivers: [target],
+      relationships: state.relationships,
+      type: "Teaching",
       topic: "nearby water",
-      targetBelief: "nearby:water",
-      method: "spoken",
-      learnerAttention: round(0.45 + target.personality.curiosity * 0.3),
-      successScore: round(0.35 + agent.personality.teachAffinity * 0.35 + target.personality.curiosity * 0.2),
-    };
+      communicationMethod: "Gesture",
+      targetMode: "one-citizen",
+      clarity: 0.56 + agent.personality.teachAffinity * 0.18,
+      confidence: 0.58 + agent.personality.teachAffinity * 0.24,
+      emotionalWeight: 0.42,
+    });
     const currentRelationship = relationshipFor(state.relationships, agent.id, target.id);
 
     if (currentRelationship) {
@@ -543,7 +617,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
       );
     }
 
-    state.teachingAttempts.push(teaching);
+    state.communications.push(communication);
     state.events.push(causalEvent({
       worldId: agent.worldId,
       tick,
@@ -554,14 +628,14 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint)
       cellId: agent.currentCellId,
       causes: decision.causes,
       effects: {
-        teachingId: teaching.id,
-        successScore: teaching.successScore,
+        communicationId: communication.id,
+        accepted: communication.accepted,
+        successScore: communication.receptions[0]?.acceptanceScore ?? 0,
       },
     }));
 
     return agent;
   }
-
   if (decision.action === "observeEnvironment") {
     const nextAgent = {
       ...agent,
@@ -663,20 +737,17 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
     teachingAttempts: [],
   };
 
-  // Update curiosity profile and motivations before emotions so aggregate curiosity reflects profile
+  // Update curiosity profile and motivations before emotions so aggregate curiosity reflects profile.
   mutable.agents = mutable.agents.map((agent) => {
     const nextProfile = updateCuriosityProfile(agent);
     const nextMotivations = computeMotivations({ ...agent, curiosityProfile: nextProfile } as HumanAgent);
-    // Update safety streak
     const nextSafetyStreak = agent.needs.safety < 0.42 ? agent.safetyStreak + 1 : 0;
-    const currentGoalValid = agent.currentGoal && BigInt(agent.currentGoal.expiresTick) > tick ? agent.currentGoal : null;
-    const nextGoal = currentGoalValid ?? deriveGoal({ ...agent, motivations: nextMotivations } as HumanAgent, nextMotivations, tick);
+
     return {
       ...agent,
       curiosityProfile: nextProfile,
       motivations: nextMotivations,
       safetyStreak: nextSafetyStreak,
-      currentGoal: nextGoal,
     };
   });
 
@@ -684,6 +755,38 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
     ...agent,
     emotions: updateEmotions(agent),
   }));
+
+  const memoryIndex = createHumanMemoryIndex(state.memories);
+
+  mutable.agents = mutable.agents.map((agent) => {
+    const result = evaluateGoalDecision({
+      worldId: state.worldId,
+      tick,
+      seed,
+      agent,
+      agents: mutable.agents,
+      relationships: mutable.relationships,
+      knowledge: state.knowledge,
+      memories: state.memories,
+      memoryIndex,
+    });
+
+    mutable.events.push(...result.events);
+
+    return result.agent;
+  });
+  const movementEnvironment = buildHumanMovementEnvironment({ id: state.worldId, seed }, tick);
+  const movementUpdate = updateHumanMovements({
+    agents: mutable.agents,
+    relationships: mutable.relationships,
+    memories: state.memories,
+    knowledge: state.knowledge,
+    environment: movementEnvironment,
+    tick,
+    seed,
+  });
+  mutable.agents = movementUpdate.agents;
+  mutable.events.push(...movementUpdate.events);
   mutable.agents = mutable.agents.map((agent) => {
     const candidates = createActionCandidates(
       agent,
@@ -698,51 +801,89 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
   });
 
   for (const agent of [...mutable.agents]) {
-    const updatedAgent = applyDecision(agent, mutable, tick);
+    const updatedAgent = applyDecision(agent, mutable, tick, seed);
 
     mutable.agents = mutable.agents.map((candidate) =>
       candidate.id === updatedAgent.id ? updatedAgent : candidate,
     );
   }
 
-  // Relationship drift each tick based on proximity and danger
-  mutable.relationships = mutable.relationships.map((rel) => {
-    const from = mutable.agents.find((a) => a.id === rel.fromAgentId);
-    const to = mutable.agents.find((a) => a.id === rel.toAgentId);
-    const sameCell = Boolean(from && to && from.currentCellId === to.currentCellId);
-    const dangerPresent = Boolean(from && (from.needs.safety > 0.68));
-    const cooperationOccurred = mutable.events.some((e) =>
-      (e.type.includes("Communication") || e.type.includes("Teaching")) && e.agentIds.includes(rel.fromAgentId) && e.agentIds.includes(rel.toAgentId)
-    );
-    const unmetExpectation = false;
-
-    return tickRelationshipDrift(rel, { sameCell, dangerPresent, cooperationOccurred, unmetExpectation });
+  const communicationUpdate = updateCommunicationEngine({
+    worldId: state.worldId,
+    tick,
+    agents: mutable.agents,
+    relationships: mutable.relationships,
+    communications: mutable.communications,
   });
+  mutable.agents = communicationUpdate.agents;
+  mutable.relationships = communicationUpdate.relationships;
+  mutable.teachingAttempts = [...mutable.teachingAttempts, ...communicationUpdate.teachingAttempts];
+  const communicationCausalEvents = communicationUpdate.communicationEvents.map((event) => communicationSystemEventToCausalEvent(event, mutable.agents));
+  mutable.events.push(...communicationCausalEvents);
 
   mutable.agents = mutable.agents.map((agent) => updateTheoryOfMind(agent, mutable.agents, tick));
 
-  const newMemories = mutable.events.flatMap((event) => createMemoriesForEvent(mutable.agents, event));
+  const memoryUpdate = updateEpisodicMemories({
+    memories: state.memories,
+    agents: mutable.agents,
+    events: mutable.events,
+    tick,
+  });
   const eventsWithMemories = mutable.events.map((event) => ({
     ...event,
-    memoryIds: newMemories
-      .filter((memory) => memory.sourceEventId === event.id)
-      .map((memory) => memory.id),
+    memoryIds: memoryUpdate.eventMemoryIds.get(event.id) ?? [],
   }));
+  const relationshipUpdate = updateRelationshipEngine({
+    worldId: state.worldId,
+    relationships: mutable.relationships,
+    agents: mutable.agents,
+    events: eventsWithMemories,
+    memories: memoryUpdate.memories,
+    tick,
+  });
+  const agentById = new Map(mutable.agents.map((agent) => [agent.id, agent]));
+  const relationshipCausalEvents = relationshipUpdate.relationshipEvents.map((event) => relationshipSystemEventToCausalEvent(event, agentById));
+  const knowledgeUpdate = updateKnowledgeEngine({
+    knowledge: state.knowledge,
+    agents: mutable.agents,
+    relationships: relationshipUpdate.relationships,
+    memories: memoryUpdate.memories,
+    events: eventsWithMemories,
+    teachingAttempts: mutable.teachingAttempts,
+    tick,
+  });
+  const knowledgeCausalEvents = knowledgeUpdate.knowledgeEvents.map((event) => causalEvent({
+    worldId: event.worldId,
+    tick: BigInt(event.tick),
+    type: "Human Knowledge Event",
+    title: event.kind,
+    summary: event.summary,
+    agentIds: event.targetHumanId ? [event.humanId, event.targetHumanId] : [event.humanId],
+    cellId: agentById.get(event.humanId)?.currentCellId ?? "unknown-cell",
+    causes: { sourceEventId: event.sourceEventId ?? "none", category: event.category },
+    effects: { knowledgeId: event.knowledgeId, confidence: event.confidence, mastery: event.mastery },
+  }));
+  const homeProfiledAgents = applyHomeProfilesToAgents(mutable.agents, eventsWithMemories, tick);
   const nextState: HumanMvaState = {
     worldId: state.worldId,
     tick: tick.toString(),
-    agents: mutable.agents,
-    relationships: mutable.relationships,
-    memories: [...state.memories, ...newMemories],
-    communications: [...state.communications, ...mutable.communications],
+    agents: homeProfiledAgents,
+    relationships: relationshipUpdate.relationships,
+    knowledge: knowledgeUpdate.knowledge,
+    memories: memoryUpdate.memories,
+    communications: [...state.communications, ...communicationUpdate.communications],
     teachingAttempts: [...state.teachingAttempts, ...mutable.teachingAttempts],
-    causalEvents: [...state.causalEvents, ...eventsWithMemories],
+    causalEvents: [...state.causalEvents, ...eventsWithMemories, ...relationshipCausalEvents, ...knowledgeCausalEvents],
   };
-  const chroniclerReport = createChroniclerReport(nextState, eventsWithMemories);
+  const chroniclerReport = createChroniclerReport(nextState, [...eventsWithMemories, ...relationshipCausalEvents, ...knowledgeCausalEvents]);
 
   return {
     state: nextState,
     newEvents: eventsWithMemories,
+    memoryEvents: memoryUpdate.memoryEvents,
+    relationshipEvents: relationshipUpdate.relationshipEvents,
+    knowledgeEvents: knowledgeUpdate.knowledgeEvents,
+    communicationEvents: communicationUpdate.communicationEvents,
     chroniclerReport,
   };
 }
@@ -758,6 +899,10 @@ export function getHumanMvaStateAtTick(
     return {
       state: initialState,
       newEvents: [],
+      memoryEvents: [],
+      relationshipEvents: [],
+      knowledgeEvents: [],
+      communicationEvents: [],
       chroniclerReport: createChroniclerReport(initialState, []),
     };
   }
@@ -766,6 +911,10 @@ export function getHumanMvaStateAtTick(
   let result: HumanTickResult = {
     state,
     newEvents: [],
+    memoryEvents: [],
+    relationshipEvents: [],
+    knowledgeEvents: [],
+    communicationEvents: [],
     chroniclerReport: createChroniclerReport(state, []),
   };
 
@@ -785,21 +934,30 @@ export function simulateHumanDay(
 ): HumanTickResult {
   let state = initialState;
   let dayEvents: HumanCausalEvent[] = [];
+  let dayMemoryEvents: HumanMemorySystemEvent[] = [];
+  let dayRelationshipEvents: HumanRelationshipSystemEvent[] = [];
+  let dayKnowledgeEvents: HumanKnowledgeSystemEvent[] = [];
+  let dayCommunicationEvents: HumanCommunicationSystemEvent[] = [];
   let report = createChroniclerReport(state, []);
 
   for (let offset = 0; offset < dayTicks; offset += 1) {
     const result = advanceHumanTick(state, seed, startTick + BigInt(offset));
     state = result.state;
     dayEvents = [...dayEvents, ...result.newEvents];
+    dayMemoryEvents = [...dayMemoryEvents, ...result.memoryEvents];
+    dayRelationshipEvents = [...dayRelationshipEvents, ...result.relationshipEvents];
+    dayKnowledgeEvents = [...dayKnowledgeEvents, ...result.knowledgeEvents];
+    dayCommunicationEvents = [...dayCommunicationEvents, ...result.communicationEvents];
     report = createChroniclerReport(state, dayEvents);
   }
 
   return {
     state,
     newEvents: dayEvents,
+    memoryEvents: dayMemoryEvents,
+    relationshipEvents: dayRelationshipEvents,
+    knowledgeEvents: dayKnowledgeEvents,
+    communicationEvents: dayCommunicationEvents,
     chroniclerReport: report,
   };
 }
-
-
-

@@ -1,4 +1,5 @@
 import { getHumanMvaStateAtTick } from "../human-engine";
+import { HUMAN_TICK_RESULT_CACHE_KEY, isHumanGoalEvent } from "../human-goals";
 import {
   HUMAN_SYSTEM_ID,
   type HumanCausalEvent,
@@ -39,7 +40,9 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
   const agentsAlive = result.state.agents.filter((agent) => agent.isAlive).length;
   const turboMode = context.fidelityMode === "turbo";
   const fastMode = context.fidelityMode === "fast";
-  const emittedEvents = turboMode ? [] : fastMode ? result.newEvents.slice(-2) : result.newEvents;
+  context.cache.set(HUMAN_TICK_RESULT_CACHE_KEY, result);
+  const behaviorEvents = result.newEvents.filter((event) => !isHumanGoalEvent(event));
+  const emittedEvents = turboMode ? [] : fastMode ? behaviorEvents.slice(-2) : behaviorEvents;
   const chroniclerReport = turboMode
     ? { ...result.chroniclerReport, entries: [] }
     : fastMode
@@ -71,6 +74,15 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
         approxAgeYears: agent.approxAgeYears,
         isAlive: agent.isAlive,
         currentCellId: agent.currentCellId,
+        previousCellId: agent.previousCellId,
+        destinationCellId: agent.destinationCellId,
+        movementIntent: agent.movementIntent,
+        movementReason: agent.movementReason,
+        lastMovedTick: agent.lastMovedTick,
+        recentPath: agent.recentPath,
+        stuckTicks: agent.stuckTicks,
+        distanceTraveled: agent.distanceTraveled,
+        explorationCount: agent.explorationCount,
         generation: agent.generation,
         motherId: agent.motherId,
         fatherId: agent.fatherId,
@@ -82,7 +94,8 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
       communicationCount: result.state.communications.length,
       teachingAttemptCount: result.state.teachingAttempts.length,
       emittedHumanEvents: emittedEvents.length,
-      suppressedHumanEvents: result.newEvents.length - emittedEvents.length,
+      emittedGoalEventsDeferred: result.newEvents.filter((event) => isHumanGoalEvent(event)).length,
+      suppressedHumanEvents: behaviorEvents.length - emittedEvents.length,
       chroniclerReport,
       agentIgnorance: {
         agentsReceiveObserverState: false,

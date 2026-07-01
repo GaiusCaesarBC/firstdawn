@@ -236,8 +236,11 @@ describe("Human MVA foundation", () => {
     expect(result.state.memories.length).toBeGreaterThan(0);
     expect(result.state.memories[0]).toMatchObject({
       worldId: world.id,
-      confidence: 0.9,
+      type: expect.any(String),
+      confidence: expect.any(Number),
+      importance: expect.any(Number),
     });
+    expect(result.state.memories[0].confidence).toBeGreaterThan(0.7);
   });
 
   it("changes relationship values after interaction", () => {
@@ -348,4 +351,3 @@ describe("Human MVA foundation", () => {
     expect(metrics.snapshot().entitiesProcessed).toBe(2);
   });
 });
-
