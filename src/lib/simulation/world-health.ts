@@ -203,6 +203,96 @@ function getSystemHealth(metadata: Prisma.JsonValue | null): {
   return { status: null, diagnostics };
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getStringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function getPersistedHumanMetrics(metadata: Prisma.JsonValue | null): Pick<
+  WorldHealthSummary,
+  | "humanDataAvailable"
+  | "humanPopulation"
+  | "maleHumans"
+  | "femaleHumans"
+  | "adultHumans"
+  | "childrenHumans"
+  | "latestHumanAction"
+  | "latestHumanCausalEvent"
+  | "averageHumanFear"
+  | "averageHumanCuriosity"
+  | "averageHumanRelationshipStability"
+  | "humanSystemStatus"
+> {
+  const humanEntry = getPipeline(metadata).find((entry) => entry.name === "humans" || entry.label === "Humans");
+  const entryMetadata = isRecord(humanEntry?.metadata) ? humanEntry.metadata : null;
+  const payload = entryMetadata && isRecord(entryMetadata.result) ? entryMetadata.result : entryMetadata;
+  const agents = Array.isArray(payload?.agents)
+    ? payload.agents.filter((agent): agent is Record<string, unknown> => isRecord(agent))
+    : [];
+
+  if (!payload || agents.length === 0) {
+    return {
+      humanDataAvailable: false,
+      humanPopulation: null,
+      maleHumans: null,
+      femaleHumans: null,
+      adultHumans: null,
+      childrenHumans: null,
+      latestHumanAction: null,
+      latestHumanCausalEvent: null,
+      averageHumanFear: null,
+      averageHumanCuriosity: null,
+      averageHumanRelationshipStability: null,
+      humanSystemStatus: "Unavailable",
+    };
+  }
+
+  const latestActions = agents.flatMap((agent) => {
+    const sex = getStringValue(agent.sex) ?? "human";
+    const lastDecision = isRecord(agent.lastDecision) ? agent.lastDecision : null;
+    const action = getStringValue(lastDecision?.action);
+
+    return action ? [`${sex}: ${action}`] : [];
+  });
+  const chroniclerReport = isRecord(payload.chroniclerReport) ? payload.chroniclerReport : null;
+  const chroniclerEntries = Array.isArray(chroniclerReport?.entries)
+    ? chroniclerReport.entries.filter((entry): entry is Record<string, unknown> => isRecord(entry))
+    : [];
+  const latestChroniclerEntry = chroniclerEntries.at(-1);
+  const relationships = Array.isArray(payload.relationships)
+    ? payload.relationships.filter((relationship): relationship is Record<string, unknown> => isRecord(relationship))
+    : [];
+  const relationshipStabilityScores = relationships.flatMap((relationship) => {
+    const trust = toFiniteNumber(relationship.trust);
+    const affection = toFiniteNumber(relationship.affection);
+    const companionship = toFiniteNumber(relationship.companionship);
+
+    return trust === null || affection === null || companionship === null
+      ? []
+      : [(trust + affection + companionship) / 3];
+  });
+  const averageHumanRelationshipStability = relationshipStabilityScores.length
+    ? relationshipStabilityScores.reduce((sum, value) => sum + value, 0) / relationshipStabilityScores.length
+    : null;
+
+  return {
+    humanDataAvailable: true,
+    humanPopulation: agents.length,
+    maleHumans: agents.filter((agent) => agent.sex === "male").length,
+    femaleHumans: agents.filter((agent) => agent.sex === "female").length,
+    adultHumans: agents.filter((agent) => (toFiniteNumber(agent.approxAgeYears) ?? 0) >= 18).length,
+    childrenHumans: agents.filter((agent) => (toFiniteNumber(agent.approxAgeYears) ?? 0) < 18).length,
+    latestHumanAction: latestActions.length > 0 ? latestActions.join(", ") : null,
+    latestHumanCausalEvent: getStringValue(latestChroniclerEntry?.title),
+    averageHumanFear: null,
+    averageHumanCuriosity: null,
+    averageHumanRelationshipStability,
+    humanSystemStatus: "Active",
+  };
+}
 function deriveBadge(input: {
   currentTick: string;
   latestTick: string | null;
@@ -582,6 +672,7 @@ function buildLightweightWorldHealthSummary(
   const lastErrorMessage = latestTick ? getLastErrorMessage(latestTick.metadata) : null;
   const weatherSnapshotAvailable = latestTick ? hasWeatherSnapshot(latestTick.metadata) : false;
   const systemHealth = latestTick ? getSystemHealth(latestTick.metadata) : { status: null, diagnostics: [] };
+  const humanMetrics = getPersistedHumanMetrics(latestTick?.metadata ?? null);
   const badge = deriveBadge({
     currentTick,
     latestTick: latestSimulationTickNumber,
@@ -634,18 +725,18 @@ function buildLightweightWorldHealthSummary(
     animalDataAvailable: false,
     ecosystemDataAvailable: false,
     adaptationDataAvailable: false,
-    humanDataAvailable: false,
-    humanPopulation: null,
-    maleHumans: null,
-    femaleHumans: null,
-    adultHumans: null,
-    childrenHumans: null,
-    latestHumanAction: null,
-    latestHumanCausalEvent: null,
-    averageHumanFear: null,
-    averageHumanCuriosity: null,
-    averageHumanRelationshipStability: null,
-    humanSystemStatus: "Unavailable",
+    humanDataAvailable: humanMetrics.humanDataAvailable,
+    humanPopulation: humanMetrics.humanPopulation,
+    maleHumans: humanMetrics.maleHumans,
+    femaleHumans: humanMetrics.femaleHumans,
+    adultHumans: humanMetrics.adultHumans,
+    childrenHumans: humanMetrics.childrenHumans,
+    latestHumanAction: humanMetrics.latestHumanAction,
+    latestHumanCausalEvent: humanMetrics.latestHumanCausalEvent,
+    averageHumanFear: humanMetrics.averageHumanFear,
+    averageHumanCuriosity: humanMetrics.averageHumanCuriosity,
+    averageHumanRelationshipStability: humanMetrics.averageHumanRelationshipStability,
+    humanSystemStatus: humanMetrics.humanSystemStatus,
   };
 }
 
@@ -666,9 +757,8 @@ export async function getLightweightWorldHealthSummary(world: LightweightHealthW
 export async function listWorldHealthSummariesLightweight(
   worlds: readonly LightweightHealthWorld[],
 ): Promise<Map<string, WorldHealthSummary>> {
-  const eligibleWorlds = worlds.filter(isDefaultUiHealthWorld);
   const entries = await Promise.all(
-    eligibleWorlds.map(async (world) => [world.id, await getLightweightWorldHealthSummary(world)] as const),
+    worlds.map(async (world) => [world.id, await getLightweightWorldHealthSummary(world)] as const),
   );
 
   return new Map(entries);

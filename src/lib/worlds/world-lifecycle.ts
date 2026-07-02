@@ -567,6 +567,31 @@ export async function listWorlds(
   });
 }
 
+export async function listAtlasWorldOptions(
+  input: ListWorldsInput = {},
+  options: WorldLifecycleOptions = {},
+): Promise<WorldWithPlanet[]> {
+  const client = options.client ?? prisma;
+
+  return client.world.findMany({
+    where: {
+      environment: input.environment,
+      slug: input.excludeTestWorlds
+        ? { not: { startsWith: "test-world-" } }
+        : undefined,
+      status:
+        input.status ??
+        (input.includeArchived === false
+          ? { not: WorldStatus.ARCHIVED }
+          : undefined),
+    },
+    orderBy: [{ environment: "asc" }, { status: "asc" }, { name: "asc" }],
+    include: {
+      planet: true,
+    },
+  });
+}
+
 export async function listWorldActionLogs(limit = 20) {
   return prisma.worldActionLog.findMany({
     take: limit,

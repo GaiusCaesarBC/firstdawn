@@ -1,4 +1,4 @@
-import type { AnimalGridCell } from "../simulation/animal-engine";
+import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
 import { getSettlementStateAtTick, type Settlement } from "../simulation/settlement-engine";
 import { getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
@@ -15,7 +15,7 @@ import type {
   AtmosphericSummary,
 } from "../simulation/atmosphere-engine";
 import { getAtmosphereStateAtTick } from "../simulation/atmosphere-engine";
-import type { BiomeGridCell } from "../simulation/biome-engine";
+import type { BiomeGridCell, BiomeSummary } from "../simulation/biome-engine";
 import { getBiomeStateAtTick } from "../simulation/biome-engine";
 import type {
   ClimateGridCell,
@@ -36,7 +36,7 @@ import type {
   PlanetResourceSummary,
 } from "../simulation/resources-engine";
 import { getPlanetResourcesStateAtTick } from "../simulation/resources-engine";
-import type { PlantGridCell } from "../simulation/plant-engine";
+import type { PlantGridCell, PlantSummary } from "../simulation/plant-engine";
 import { getPlantEcologyStateAtTick } from "../simulation/plant-engine";
 import type {
   TerrainGridCell,
@@ -139,6 +139,12 @@ export type AtlasCell = ClimateGridCell & Pick<
   biomeCategory: string;
   biomeColor: string;
   biomeTags: readonly string[];
+  adjustedTemperatureC: number;
+  precipitationScore: number;
+  humidityScore: number;
+  soilMoistureScore: number;
+  seasonalityScore: number;
+  transitionScore: number;
   habitabilityScore: number;
   fertilityScore: number;
   waterAvailabilityScore: number;
@@ -595,6 +601,9 @@ export type AtlasSnapshot = {
   atmosphereSummary: AtmosphericSummary;
   weatherSummary: WeatherSummary;
   resourceSummary: PlanetResourceSummary;
+  biomeSummary: BiomeSummary | null;
+  plantSummary: PlantSummary | null;
+  animalSummary: AnimalSummary | null;
   statistics: AtlasStatistics;
   humans: AtlasHumanMva;
   settlements: AtlasSettlements;
@@ -773,6 +782,12 @@ function combineAtlasCells(
       biomeCategory,
       biomeColor,
       biomeTags: [...biomeTags],
+      adjustedTemperatureC: plantCell?.adjustedTemperatureC ?? biomeCell?.adjustedTemperatureC ?? cell.averageTemperatureC,
+      precipitationScore: plantCell?.precipitationScore ?? biomeCell?.precipitationScore ?? weatherCell.precipitationPotential,
+      humidityScore: plantCell?.humidityScore ?? biomeCell?.humidityScore ?? weatherCell.relativeHumidity,
+      soilMoistureScore: plantCell?.soilMoistureScore ?? biomeCell?.soilMoistureScore ?? hydrologyCell.moisturePotential,
+      seasonalityScore: plantCell?.seasonalityScore ?? biomeCell?.seasonalityScore ?? Math.abs(cell.seasonalModifier),
+      transitionScore: plantCell?.transitionScore ?? biomeCell?.transitionScore ?? 0,
       habitabilityScore,
       fertilityScore,
       waterAvailabilityScore,
@@ -1910,6 +1925,9 @@ function buildAtlasSnapshotUncached(
     atmosphereSummary: atmosphereState.summary,
     weatherSummary: weatherState.summary,
     resourceSummary: resourceState.summary,
+    biomeSummary: biomeState?.summary ?? null,
+    plantSummary: plantState?.summary ?? null,
+    animalSummary: animalState?.summary ?? null,
     statistics: buildAtlasStatistics(
       climate,
       terrainState.summary,

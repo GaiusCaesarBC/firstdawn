@@ -235,7 +235,12 @@ describe("world map atlas ui", () => {
   });
 
   it("keeps timeline slider changes local until pointer release or keyboard commit", async () => {
-    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => buildAtlasSnapshot(baseWorld, day));
+    const snapshotForTimeline = buildAtlasSnapshot(baseWorld, 1);
+    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => ({
+      ...snapshotForTimeline,
+      selectedDay: day,
+      tick: String(day * 24),
+    }));
     renderAtlas({ fetchSnapshot });
 
     const slider = screen.getByTestId("time-slider") as HTMLInputElement;
@@ -324,7 +329,12 @@ describe("world map atlas ui", () => {
   it("shows Human MVA markers, inspector details, and one-day action", async () => {
     window.history.replaceState(null, "", "/worlds/map");
     window.sessionStorage.clear();
-    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => buildAtlasSnapshot(baseWorld, day));
+    const snapshotForHumanStep = buildAtlasSnapshot(baseWorld, 1);
+    const fetchSnapshot = vi.fn(async (_worldId: string, day: number) => ({
+      ...snapshotForHumanStep,
+      selectedDay: day,
+      tick: String(day * 24),
+    }));
     const { initialSnapshot } = renderAtlas({ fetchSnapshot });
 
     expect(screen.getByTestId("human-inspector").textContent).toContain("First Humans");
@@ -403,13 +413,21 @@ describe("world map atlas ui", () => {
     expect(screen.getByTestId("future-layers-panel").textContent).toContain("snapshot failed");
   });
   it("builds deterministic seasonal atlas snapshots for different days", () => {
-    const firstDay = buildAtlasSnapshot(baseWorld, 1);
-    const midYear = buildAtlasSnapshot(baseWorld, 220);
-    const firstDayRepeat = buildAtlasSnapshot(baseWorld, 1);
+    const compactYearWorld = {
+      ...baseWorld,
+      yearLengthDays: 2,
+      planet: {
+        ...baseWorld.planet,
+        orbitalPeriodDays: 2,
+      },
+    } as WorldWithPlanet;
+    const firstDay = buildAtlasSnapshot(compactYearWorld, 1);
+    const midYear = buildAtlasSnapshot(compactYearWorld, 2);
+    const firstDayRepeat = buildAtlasSnapshot(compactYearWorld, 1);
 
     expect(firstDay).toEqual(firstDayRepeat);
     expect(firstDay.selectedDay).toBe(1);
-    expect(midYear.selectedDay).toBe(220);
+    expect(midYear.selectedDay).toBe(2);
     expect(firstDay.climate.seasonNorthernHemisphere).not.toBe(midYear.climate.seasonNorthernHemisphere);
     expect(firstDay.astronomy.solarDeclinationDegrees).not.toBe(midYear.astronomy.solarDeclinationDegrees);
     expect(firstDay.statistics.averageTemperatureC).not.toBe(midYear.statistics.averageTemperatureC);
