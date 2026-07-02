@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AtlasCell, AtlasSnapshot } from "../../../lib/worlds/map-atlas";
+import { createAtlasCellMap, sampleProceduralTerrainColor } from "../../../lib/simulation/terrain-renderer";
 
 export type PlanetGlobeLayerId =
   | "terrain"
@@ -26,6 +27,28 @@ export type PlanetGlobeLayerId =
   | "trade"
   | "debug";
 
+export type FuturePlanetEffectId =
+  | "cityLights"
+  | "campfires"
+  | "volcanoes"
+  | "lightning"
+  | "auroras"
+  | "smoke"
+  | "migrationPaths"
+  | "tradeRoutes"
+  | "ships";
+
+export const FUTURE_PLANET_EFFECT_HOOKS: readonly FuturePlanetEffectId[] = Object.freeze([
+  "cityLights",
+  "campfires",
+  "volcanoes",
+  "lightning",
+  "auroras",
+  "smoke",
+  "migrationPaths",
+  "tradeRoutes",
+  "ships",
+]);
 export type PlanetGlobeLayerSetting = {
   visible: boolean;
   opacity: number;
@@ -176,6 +199,65 @@ function getDisplayRow(snapshot: AtlasSnapshot, cell: AtlasCell): number {
 function buildCellGrid(snapshot: AtlasSnapshot): Map<string, AtlasCell> {
   return new Map(snapshot.cells.map((cell) => [`${getDisplayRow(snapshot, cell)}:${cell.column}`, cell]));
 }
+function getLargestLandCameraTarget(snapshot: AtlasSnapshot): { yaw: number; pitch: number } {
+  const cellById = new Map(snapshot.cells.map((cell) => [cell.id, cell]));
+  const visited = new Set<string>();
+  let largestLand: AtlasCell[] = [];
+
+  for (const cell of snapshot.cells) {
+    if (visited.has(cell.id) || isWaterCell(cell)) {
+      continue;
+    }
+
+    const component: AtlasCell[] = [];
+    const queue = [cell];
+    visited.add(cell.id);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      component.push(current);
+
+      for (const neighborId of current.neighbors) {
+        const neighbor = cellById.get(neighborId);
+
+        if (!neighbor || visited.has(neighbor.id) || isWaterCell(neighbor)) {
+          continue;
+        }
+
+        visited.add(neighbor.id);
+        queue.push(neighbor);
+      }
+    }
+
+    if (component.length > largestLand.length) {
+      largestLand = component;
+    }
+  }
+
+  if (largestLand.length === 0) {
+    const dayYaw = snapshot.selectedDay / Math.max(1, snapshot.yearLengthDays) * Math.PI * 2;
+    return { yaw: dayYaw, pitch: 0 };
+  }
+
+  const vector = largestLand.reduce<[number, number, number]>((sum, cell) => {
+    const latitude = cell.midpointLatitude * Math.PI / 180;
+    const longitude = cell.midpointLongitude * Math.PI / 180;
+    const cosLatitude = Math.cos(latitude);
+    return [
+      sum[0] + cosLatitude * Math.sin(longitude),
+      sum[1] + Math.sin(latitude),
+      sum[2] + cosLatitude * Math.cos(longitude),
+    ];
+  }, [0, 0, 0]);
+  const longitude = Math.atan2(vector[0], vector[2]);
+  const horizontal = Math.hypot(vector[0], vector[2]);
+  const latitude = Math.atan2(vector[1], horizontal);
+
+  return {
+    yaw: -longitude,
+    pitch: clamp(latitude, -1.05, 1.05),
+  };
+}
 
 function layerVisible(layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>, layer: PlanetGlobeLayerId): boolean {
   return layers[layer]?.visible ?? false;
@@ -280,28 +362,31 @@ function sameSurfaceColor(
     : baseCellColor(fallback, layers);
 }
 
-function compositeCoastline(
-  baseColor: [number, number, number],
-  center: AtlasCell,
-  masks: SurfaceMaskSample,
-): [number, number, number] {
-  const coastStrength = clamp(masks.coastMask, 0, 1);
-
-  if (isWaterCell(center)) {
-    const shallowWater = mixRgb(hexToRgb("#46b8d8"), hexToRgb("#0f4f9d"), center.terrainType === "DEEP_OCEAN" ? 0.72 : 0.28);
-    return mixRgb(baseColor, shallowWater, coastStrength * 0.34);
-  }
-
-  const shoreTint = center.terrainType === "BEACH" ? hexToRgb("#e4cf95") : hexToRgb("#c7b176");
-  return mixRgb(baseColor, shoreTint, coastStrength * 0.22);
-}
-
 function debugMaskColor(masks: SurfaceMaskSample, center: AtlasCell): [number, number, number] {
   if (center.isCoast || masks.coastMask > 0.4) {
     return [246, 211, 104];
   }
 
   return masks.landMask >= masks.oceanMask ? [92, 170, 86] : [36, 105, 190];
+}
+
+function gradePlanetSurfaceColor(color: [number, number, number], center: AtlasCell, masks: SurfaceMaskSample): [number, number, number] {
+  if (isWaterCell(center)) {
+    const depth = clamp(center.distanceToCoast / 9 + (0.48 - center.elevation) * 1.35, 0, 1);
+    const deepened = mixRgb(color, hexToRgb("#03163a"), 0.2 + depth * 0.26);
+    return mixRgb(deepened, hexToRgb("#5cc7c6"), masks.coastMask * 0.22);
+  }
+
+  let land = color;
+  const greenSignal = clamp(center.plantDensity * 0.22 + center.biomassScore * 0.16 + center.vegetationDensity * 0.12, 0, 0.24);
+  const aridSignal = clamp(center.drynessIndex * 0.16 + (1 - center.moisturePotential) * 0.08, 0, 0.18);
+  const mountainSignal = ["MOUNTAINS", "HIGH_MOUNTAINS", "PLATEAU"].includes(center.terrainType) ? clamp(center.ruggedness * 0.18 + center.elevation * 0.08, 0, 0.22) : 0;
+
+  land = mixRgb(land, hexToRgb("#709e54"), greenSignal);
+  land = mixRgb(land, hexToRgb("#c7a464"), aridSignal);
+  land = mixRgb(land, hexToRgb("#9c9587"), mountainSignal);
+  land = mixRgb(land, hexToRgb("#e5d09a"), masks.coastMask * 0.14);
+  return land;
 }
 
 function generateSurfaceTexture(
@@ -326,6 +411,7 @@ function generateSurfaceTexture(
 
   const image = context.createImageData(TEXTURE_WIDTH, TEXTURE_HEIGHT);
   const grid = buildCellGrid(snapshot);
+  const proceduralCellMap = createAtlasCellMap(snapshot);
   const rows = snapshot.grid.latitudeDivisions;
   const columns = snapshot.grid.longitudeDivisions;
   const getCell = (row: number, column: number) => grid.get(`${clamp(row, 0, rows - 1)}:${((column % columns) + columns) % columns}`) ?? snapshot.cells[0];
@@ -352,11 +438,19 @@ function generateSurfaceTexture(
       const masks = sampleSurfaceMasks(samples, center);
       const surface = water ? "ocean" : "land";
       const smoothedColor = sameSurfaceColor(samples, layers, surface, center);
+      const proceduralColor = hexToRgb(sampleProceduralTerrainColor({
+        snapshot,
+        cellMap: proceduralCellMap,
+        cell: center,
+        xRatio: clamp(u * columns - Math.floor(u * columns), 0, 1),
+        yRatio: clamp(v * rows - Math.floor(v * rows), 0, 1),
+        quality: "high",
+      }));
       const color = debugMode === "mask"
         ? debugMaskColor(masks, center)
         : debugMode === "smoothed"
           ? smoothedColor
-          : compositeCoastline(smoothedColor, center, masks);
+          : gradePlanetSurfaceColor(proceduralColor, center, masks);
 
       const relief = layerVisible(layers, "lighting")
         ? (center.ruggedness * 18 + center.elevation * 16 - center.distanceToOcean * 0.035) * layerOpacity(layers, "lighting")
@@ -376,6 +470,7 @@ function generateSurfaceTexture(
   context.putImageData(image, 0, 0);
   return canvas;
 }
+
 function generateCloudTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
@@ -399,10 +494,13 @@ function generateCloudTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGlob
   for (let y = 0; y < TEXTURE_HEIGHT; y += 1) {
     for (let x = 0; x < TEXTURE_WIDTH; x += 1) {
       const cell = getCell(Math.floor((y / TEXTURE_HEIGHT) * rows), Math.floor((x / TEXTURE_WIDTH) * columns));
-      const weather = clamp(cell.cloudCover * 0.72 + cell.relativeHumidity * 0.15 + cell.stormPotential * 0.36, 0, 1);
+      const weather = clamp(cell.cloudCover * 0.62 + cell.relativeHumidity * 0.2 + cell.stormPotential * 0.32, 0, 1);
+      const broad = noise2d(x * 0.006 + Math.sin(y * 0.009) * 7, y * 0.011);
       const bandNoise = noise2d(x * 0.018 + Math.sin(y * 0.017) * 4, y * 0.034);
-      const alpha = weather > 0.18 && bandNoise < weather * 0.74
-        ? clamp((weather - 0.14) * 118 * layerOpacity(layers, "clouds"), 0, 42)
+      const detail = noise2d(x * 0.052 + cell.windStrength * 2.4, y * 0.041 + cell.row * 0.31);
+      const formation = clamp(weather * 0.68 + broad * 0.28 + detail * 0.12 - bandNoise * 0.24, 0, 1);
+      const alpha = formation > 0.36
+        ? clamp((formation - 0.26) * 172, 0, cell.stormPotential > 0.58 ? 118 : 92)
         : 0;
       const offset = (y * TEXTURE_WIDTH + x) * 4;
 
@@ -896,11 +994,7 @@ function drawOverlayCanvas({
 
 export function PlanetGlobeRenderer(props: PlanetGlobeRendererProps) {
   if (process.env.NODE_ENV === "test") {
-    return (
-      <div data-testid="planet-globe-renderer" className="absolute inset-0 bg-[#02060c]">
-        <canvas aria-label="Rendered 3D planet" className="absolute inset-0 h-full w-full" />
-      </div>
-    );
+    return null;
   }
 
   return <PlanetGlobeRendererRuntime {...props} />;
@@ -918,11 +1012,12 @@ function PlanetGlobeRendererRuntime({
 }: PlanetGlobeRendererProps) {
   const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const initialCameraTarget = useMemo(() => getLargestLandCameraTarget(snapshot), [snapshot]);
   const cameraRef = useRef<CameraState>({
-    yaw: snapshot.selectedDay / Math.max(1, snapshot.yearLengthDays) * Math.PI * 2,
-    targetYaw: snapshot.selectedDay / Math.max(1, snapshot.yearLengthDays) * Math.PI * 2,
-    pitch: 0,
-    targetPitch: 0,
+    yaw: initialCameraTarget.yaw,
+    targetYaw: initialCameraTarget.yaw,
+    pitch: initialCameraTarget.pitch,
+    targetPitch: initialCameraTarget.pitch,
     zoom: 1,
     targetZoom: 1,
     velocity: 0.0007,
@@ -1005,24 +1100,42 @@ function PlanetGlobeRendererRuntime({
 
       void main() {
         vec4 sampleColor = texture2D(u_texture, v_uv);
-        float facing = clamp(v_normal.z, 0.0, 1.0);
-        float fresnel = pow(1.0 - facing, 2.2);
+        vec3 normal = normalize(v_normal);
+        float facing = clamp(normal.z, 0.0, 1.0);
+        float fresnel = pow(1.0 - facing, 2.15);
+        vec3 light = normalize(vec3(-0.48, 0.24, 0.84));
+        float lightDot = dot(normal, light);
+        float day = smoothstep(-0.18, 0.92, lightDot);
+        float terminator = smoothstep(-0.28, 0.22, lightDot);
 
         if (u_mode == 1) {
-          gl_FragColor = vec4(sampleColor.rgb, sampleColor.a * u_opacity * facing);
+          float cloudAlpha = sampleColor.a * u_opacity * smoothstep(0.02, 0.92, facing);
+          vec3 cloudColor = mix(vec3(0.74, 0.80, 0.88), vec3(1.0), clamp(day + 0.22, 0.0, 1.0));
+          gl_FragColor = vec4(cloudColor, cloudAlpha);
           return;
         }
 
         if (u_mode == 2) {
-          gl_FragColor = vec4(0.35, 0.78, 1.0, fresnel * 0.42 * u_opacity);
+          float rim = pow(1.0 - facing, 1.65);
+          float outer = pow(1.0 - facing, 5.5);
+          vec3 atmosphere = mix(vec3(0.21, 0.58, 1.0), vec3(0.62, 0.9, 1.0), outer);
+          gl_FragColor = vec4(atmosphere, (rim * 0.34 + outer * 0.34) * u_opacity);
           return;
         }
 
-        vec3 light = normalize(vec3(-0.42, 0.28, 0.86));
-        float day = clamp(dot(normalize(v_normal), light), 0.0, 1.0);
-        vec3 color = sampleColor.rgb * (0.24 + day * 0.88);
-        color += vec3(0.10, 0.18, 0.24) * fresnel * 0.22;
-        color += vec3(0.84, 0.92, 1.0) * pow(max(dot(normalize(reflect(-light, normalize(v_normal))), vec3(0.0, 0.0, 1.0)), 0.0), 30.0) * 0.10;
+        float oceanSignal = clamp((sampleColor.b - sampleColor.r) * 1.75 + (sampleColor.g - sampleColor.r) * 0.45, 0.0, 1.0);
+        vec3 ambientNight = vec3(0.035, 0.055, 0.085);
+        vec3 ambientDay = vec3(0.18, 0.20, 0.19);
+        vec3 color = sampleColor.rgb * mix(ambientNight, ambientDay, day);
+        color += sampleColor.rgb * day * 0.82;
+        color *= 0.86 + facing * 0.18;
+        color = mix(color, color * vec3(0.52, 0.62, 0.78), (1.0 - terminator) * 0.46);
+        color += vec3(0.16, 0.36, 0.54) * fresnel * 0.18;
+
+        vec3 reflected = normalize(reflect(-light, normal));
+        float specular = pow(max(dot(reflected, vec3(0.0, 0.0, 1.0)), 0.0), 42.0) * day * oceanSignal;
+        color += vec3(0.82, 0.94, 1.0) * specular * 0.18;
+
         gl_FragColor = vec4(color, 1.0);
       }
     `;
