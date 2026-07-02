@@ -43,6 +43,20 @@ export type SnapshotWorldKeySource = {
   planet?: Record<string, unknown> | null;
 };
 
+type SnapshotPlanetKey = {
+  name: unknown;
+  radiusKm: unknown;
+  gravityMS2: unknown;
+  massKg: unknown;
+  rotationPeriodHours: unknown;
+  orbitalPeriodDays: unknown;
+  axialTiltDegrees: unknown;
+  orbitalEccentricity: unknown;
+  atmospherePressureKPa: unknown;
+  atmosphereComposition: unknown;
+  oceanCoveragePercent: unknown;
+};
+
 const globalSymbol = Symbol.for("first-dawn.snapshot-performance-cache");
 const globalStore = (globalThis as unknown as Record<symbol, SnapshotCacheStore | undefined>)[globalSymbol];
 const store: SnapshotCacheStore = globalStore ?? {
@@ -74,6 +88,26 @@ export function stableSnapshotStringify(value: unknown): string {
   return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSnapshotStringify(entryValue)}`).join(",")}}`;
 }
 
+function getSnapshotPlanetKey(planet: Record<string, unknown> | null | undefined): SnapshotPlanetKey | null {
+  if (!planet) {
+    return null;
+  }
+
+  return {
+    name: planet.name ?? null,
+    radiusKm: planet.radiusKm ?? null,
+    gravityMS2: planet.gravityMS2 ?? null,
+    massKg: planet.massKg ?? null,
+    rotationPeriodHours: planet.rotationPeriodHours ?? null,
+    orbitalPeriodDays: planet.orbitalPeriodDays ?? null,
+    axialTiltDegrees: planet.axialTiltDegrees ?? null,
+    orbitalEccentricity: planet.orbitalEccentricity ?? null,
+    atmospherePressureKPa: planet.atmospherePressureKPa ?? null,
+    atmosphereComposition: planet.atmosphereComposition ?? null,
+    oceanCoveragePercent: planet.oceanCoveragePercent ?? null,
+  };
+}
+
 export function getSnapshotWorldKey(world: SnapshotWorldKeySource, grid: SpatialGrid, variant?: string): string {
   const gridSummary = grid.getGridSummary();
 
@@ -92,7 +126,7 @@ export function getSnapshotWorldKey(world: SnapshotWorldKeySource, grid: Spatial
       initialYear: world.initialYear,
       initialDay: world.initialDay,
       initialHour: world.initialHour,
-      planet: world.planet ?? null,
+      planet: getSnapshotPlanetKey(world.planet),
     },
     grid: {
       latitudeDivisions: gridSummary.latitudeDivisions,

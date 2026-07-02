@@ -1,9 +1,9 @@
 import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
-import { getSettlementStateAtTick, type Settlement } from "../simulation/settlement-engine";
+import { getSettlementStateAtTick, type Settlement, type SettlementTickResult } from "../simulation/settlement-engine";
 import { getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
-import { getResourceStorageStateFromHumanState, type HumanInventorySummary, type SettlementResourceSummary, type SettlementStorage } from "../simulation/resource-storage-engine";
-import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship } from "../simulation/human-types";
+import { getResourceStorageStateFromHumanState, type HumanInventorySummary, type ResourceStorageResult, type SettlementResourceSummary, type SettlementStorage } from "../simulation/resource-storage-engine";
+import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship, HumanTickResult } from "../simulation/human-types";
 import { HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
 import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
 import type {
@@ -544,6 +544,16 @@ export type AtlasHumanMva = {
   forbiddenSystemsImplemented: [];
 };
 
+type AtlasHumanDerivedContext = {
+  tick: bigint;
+  dayStartTick: bigint;
+  humanResult: HumanTickResult;
+  dayStartHumanResult: HumanTickResult;
+  previousHumanResult: HumanTickResult | null;
+  settlementResult: SettlementTickResult;
+  familyResult: FamilyGenerationsResult;
+  storageResult: ResourceStorageResult;
+};
 type AtlasHumanEmotionKey = "fear" | "distress" | "relief" | "curiosity" | "trust" | "attachment";
 
 export type AtlasHumanEmotionReason = {
@@ -1368,29 +1378,67 @@ function topRelationships(
   return sorted.slice(0, limit).map((relationship) => relationshipSummary(relationship, displayId));
 }
 
-function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): AtlasSettlements {
+function getAtlasHumanDerivedContext(
+  world: WorldWithPlanet,
+  tick: bigint,
+  dayStartTick: bigint,
+  grid: SpatialGrid,
+): AtlasHumanDerivedContext {
+  const key = getSnapshotWorldKey(world, grid, `atlas:social:${tick.toString()}:${dayStartTick.toString()}`);
+
+  return memoizeSnapshotValue(
+    "atlas:social-context",
+    key,
+    () => {
+      const humanResult = getHumanMvaStateAtTick(world, tick);
+      const dayStartHumanResult = getHumanMvaStateAtTick(world, dayStartTick);
+      const previousHumanResult = tick > 0n ? getHumanMvaStateAtTick(world, tick - 1n) : null;
+      const settlementResult = getSettlementStateAtTick({
+        world,
+        tick,
+        humanResult,
+        previousHumanResult,
+      });
+      const familyResult = getFamilyGenerationsStateFromHumanState({
+        worldId: world.id,
+        tick,
+        state: humanResult.state,
+        previousState: previousHumanResult?.state ?? null,
+        settlements: settlementResult,
+      });
+      const storageResult = getResourceStorageStateFromHumanState({
+        worldId: world.id,
+        tick,
+        state: familyResult.state,
+        settlements: settlementResult,
+      });
+
+      return {
+        tick,
+        dayStartTick,
+        humanResult,
+        dayStartHumanResult,
+        previousHumanResult,
+        settlementResult,
+        familyResult,
+        storageResult,
+      };
+    },
+    0,
+  ).value;
+}
+function buildAtlasSettlements(
+  world: WorldWithPlanet,
+  selectedDay: number,
+  grid: SpatialGrid = createGrid(),
+  context?: AtlasHumanDerivedContext,
+): AtlasSettlements {
   const dayEndTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
-  const currentHumanResult = getHumanMvaStateAtTick(world, dayEndTick);
-  const previousHumanResult = dayEndTick > 0n ? getHumanMvaStateAtTick(world, dayEndTick - 1n) : null;
-  const result = getSettlementStateAtTick({
-    world,
-    tick: dayEndTick,
-    humanResult: currentHumanResult,
-    previousHumanResult,
-  });
-  const familyResult = getFamilyGenerationsStateFromHumanState({
-    worldId: world.id,
-    tick: dayEndTick,
-    state: currentHumanResult.state,
-    previousState: previousHumanResult?.state ?? null,
-    settlements: result,
-  });
-  const storageResult = getResourceStorageStateFromHumanState({
-    worldId: world.id,
-    tick: dayEndTick,
-    state: familyResult.state,
-    settlements: result,
-  });
+  const derivedContext = context ?? getAtlasHumanDerivedContext(world, dayEndTick, dayEndTick, grid);
+  const currentHumanResult = derivedContext.humanResult;
+  const result = derivedContext.settlementResult;
+  const familyResult = derivedContext.familyResult;
+  const storageResult = derivedContext.storageResult;
   const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const normalizeSettlementText = (value: string) => value.replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
@@ -1485,11 +1533,17 @@ function buildAtlasSettlements(world: WorldWithPlanet, selectedDay: number): Atl
     scoring: result.scoring.slice(0, 12),
   };
 }
-function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHumanMva {
+function buildAtlasHumans(
+  world: WorldWithPlanet,
+  selectedDay: number,
+  grid: SpatialGrid = createGrid(),
+  context?: AtlasHumanDerivedContext,
+): AtlasHumanMva {
   const dayEndTick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
   const dayStartTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
-  const result = getHumanMvaStateAtTick(world, dayEndTick);
-  const dayStartResult = getHumanMvaStateAtTick(world, dayStartTick);
+  const derivedContext = context ?? getAtlasHumanDerivedContext(world, dayEndTick, dayStartTick, grid);
+  const result = derivedContext.humanResult;
+  const dayStartResult = derivedContext.dayStartHumanResult;
   const dayStartAgentById = new Map(dayStartResult.state.agents.map((agent) => [agent.id, agent]));
   const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
@@ -1497,26 +1551,7 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
     (text, agent) => text.split(agent.id).join(displayId(agent.id)),
     value,
   ).replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
-  const previousHumanResult = dayEndTick > 0n ? getHumanMvaStateAtTick(world, dayEndTick - 1n) : null;
-  const settlementResult = getSettlementStateAtTick({
-    world,
-    tick: dayEndTick,
-    humanResult: result,
-    previousHumanResult,
-  });
-  const familyResult = getFamilyGenerationsStateFromHumanState({
-    worldId: world.id,
-    tick: dayEndTick,
-    state: result.state,
-    previousState: previousHumanResult?.state ?? null,
-    settlements: settlementResult,
-  });
-  const storageResult = getResourceStorageStateFromHumanState({
-    worldId: world.id,
-    tick: dayEndTick,
-    state: familyResult.state,
-    settlements: settlementResult,
-  });
+  const storageResult = derivedContext.storageResult;
   const normalizeStoredResource = (resource: HumanInventorySummary["personalInventory"][number]) => ({
     ...resource,
     id: normalizeHumanTextIds(resource.id),
@@ -1796,18 +1831,15 @@ function buildAtlasHumans(world: WorldWithPlanet, selectedDay: number): AtlasHum
   };
 }
 
-function buildAtlasFamilies(world: WorldWithPlanet, selectedDay: number): AtlasFamilyTree {
+function buildAtlasFamilies(
+  world: WorldWithPlanet,
+  selectedDay: number,
+  grid: SpatialGrid = createGrid(),
+  context?: AtlasHumanDerivedContext,
+): AtlasFamilyTree {
   const tick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
-  const humanResult = getHumanMvaStateAtTick(world, tick);
-  const previousHumanResult = tick > 0n ? getHumanMvaStateAtTick(world, tick - 1n) : null;
-  const settlementResult = getSettlementStateAtTick({ world, tick, humanResult, previousHumanResult });
-  const result = getFamilyGenerationsStateFromHumanState({
-    worldId: world.id,
-    tick,
-    state: humanResult.state,
-    previousState: previousHumanResult?.state ?? null,
-    settlements: settlementResult,
-  });
+  const dayStartTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const result = (context ?? getAtlasHumanDerivedContext(world, tick, dayStartTick, grid)).familyResult;
   const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, agent.id.includes(":first-human-") ? `first-human-${agent.sex}` : agent.id.replace(`${world.id}:`, "") ]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const normalizeEntityId = (sourceId: string | null) => sourceId ? sourceId.replace(`${world.id}:`, "") : null;
@@ -1880,31 +1912,119 @@ export function normalizeAtlasSelectedDay(world: WorldWithPlanet, requestedDay?:
   return clamp(Math.round(requestedDay), 1, yearLengthDays);
 }
 
+type AtlasSnapshotStageTiming = {
+  name: string;
+  durationMs: number;
+};
+
+function nowSnapshotMs(): number {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function timeAtlasStage<T>(timings: AtlasSnapshotStageTiming[], name: string, task: () => T): T {
+  const start = nowSnapshotMs();
+
+  try {
+    return task();
+  } finally {
+    timings.push({ name, durationMs: Math.max(0, nowSnapshotMs() - start) });
+  }
+}
+
+function logAtlasStageTimings(world: WorldWithPlanet, selectedDay: number, timings: AtlasSnapshotStageTiming[]) {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  const total = timings.reduce((sum, timing) => sum + timing.durationMs, 0);
+  const lines = [
+    `\n=== atlas:snapshot:stages ${world.slug} day ${selectedDay} (total ${total.toFixed(2)} ms) ===`,
+    ...[...timings]
+      .sort((left, right) => right.durationMs - left.durationMs)
+      .map((timing) => `${timing.name.padEnd(30)} ${timing.durationMs.toFixed(2)} ms`),
+    "==============================================\n",
+  ];
+
+  console.log(lines.join("\n"));
+}
 function buildAtlasSnapshotUncached(
   world: WorldWithPlanet,
   selectedDay = getConfiguredCurrentDay(world),
   grid: SpatialGrid = createGrid(),
 ): AtlasSnapshot {
+  const stageTimings: AtlasSnapshotStageTiming[] = [];
   const normalizedDay = normalizeAtlasSelectedDay(world, selectedDay);
   const tick = getAtlasTickForDay(world, normalizedDay);
-  const gridSummary = getGridSummary(grid);
-  const time = getTimeStateAtTick(world, tick);
-  const astronomy = getAstronomyStateAtTick(world, tick);
-  const planet = getPlanetState(world);
-  const climate = getClimateStateAtTick(world, tick);
-  const climateCells = getClimateGridAtTick(world, tick, grid);
-  const terrainState = getTerrainState(world, grid);
-  const hydrologyState = getHydrologyState(world, grid);
-  const atmosphereState = getAtmosphereStateAtTick(world, tick, grid);
-  const weatherState = getWeatherStateAtTick(world, tick, grid);
-  const resourceState = getPlanetResourcesStateAtTick(world, tick, grid);
-  const biomeState = world.seed?.trim() ? getBiomeStateAtTick(world, tick, grid) : null;
-  const plantState = world.seed?.trim() ? getPlantEcologyStateAtTick(world, tick, grid) : null;
-  const animalState = world.seed?.trim() ? getAnimalEcologyStateAtTick(world, tick, grid) : null;
-  const fingerprint = buildWorldFingerprint(world, grid);
-  const environmentVerification = verifyWorldAgainstCanonical(world, grid);
+  const civilizationTick = BigInt(Math.max(1, normalizedDay) * HUMAN_MVA_DAY_TICKS);
+  const civilizationDayStartTick = BigInt(Math.max(0, normalizedDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const settlementTick = BigInt(Math.max(0, normalizedDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const gridSummary = timeAtlasStage(stageTimings, "grid:summary", () => getGridSummary(grid));
+  const time = timeAtlasStage(stageTimings, "time", () => getTimeStateAtTick(world, tick));
+  const astronomy = timeAtlasStage(stageTimings, "astronomy", () => getAstronomyStateAtTick(world, tick));
+  const planet = timeAtlasStage(stageTimings, "planet", () => getPlanetState(world));
+  const climate = timeAtlasStage(stageTimings, "climate:summary", () => getClimateStateAtTick(world, tick));
+  const climateCells = timeAtlasStage(stageTimings, "climate:cells", () => getClimateGridAtTick(world, tick, grid));
+  const terrainState = timeAtlasStage(stageTimings, "terrain", () => getTerrainState(world, grid));
+  const hydrologyState = timeAtlasStage(stageTimings, "hydrology", () => getHydrologyState(world, grid));
+  const atmosphereState = timeAtlasStage(stageTimings, "atmosphere", () => getAtmosphereStateAtTick(world, tick, grid));
+  const weatherState = timeAtlasStage(stageTimings, "weather", () => getWeatherStateAtTick(world, tick, grid));
+  const resourceState = timeAtlasStage(stageTimings, "resources", () => getPlanetResourcesStateAtTick(world, tick, grid));
+  const biomeState = timeAtlasStage(stageTimings, "biomes", () => world.seed?.trim() ? getBiomeStateAtTick(world, tick, grid) : null);
+  const plantState = timeAtlasStage(stageTimings, "plants", () => world.seed?.trim() ? getPlantEcologyStateAtTick(world, tick, grid) : null);
+  const animalState = timeAtlasStage(stageTimings, "animals", () => world.seed?.trim() ? getAnimalEcologyStateAtTick(world, tick, grid) : null);
+  const fingerprint = timeAtlasStage(stageTimings, "fingerprint", () => buildWorldFingerprint(world, grid));
+  const environmentVerification = timeAtlasStage(stageTimings, "canonical:verify", () => verifyWorldAgainstCanonical(world, grid));
+  const statistics = timeAtlasStage(stageTimings, "statistics", () => buildAtlasStatistics(
+    climate,
+    terrainState.summary,
+    hydrologyState.summary,
+    atmosphereState.summary,
+    weatherState.summary,
+    resourceState.summary,
+  ));
+  const civilizationContext = timeAtlasStage(stageTimings, "humans:context", () => getAtlasHumanDerivedContext(
+    world,
+    civilizationTick,
+    civilizationDayStartTick,
+    grid,
+  ));
+  const settlementContext = timeAtlasStage(stageTimings, "settlements:context", () => getAtlasHumanDerivedContext(
+    world,
+    settlementTick,
+    settlementTick,
+    grid,
+  ));
+  const humans = timeAtlasStage(stageTimings, "humans:dossier", () => buildAtlasHumans(
+    world,
+    normalizedDay,
+    grid,
+    civilizationContext,
+  ));
+  const settlements = timeAtlasStage(stageTimings, "settlements:dossier", () => buildAtlasSettlements(
+    world,
+    normalizedDay,
+    grid,
+    settlementContext,
+  ));
+  const families = timeAtlasStage(stageTimings, "families:dossier", () => buildAtlasFamilies(
+    world,
+    normalizedDay,
+    grid,
+    civilizationContext,
+  ));
+  const cells = timeAtlasStage(stageTimings, "cells:combine", () => combineAtlasCells(
+    climateCells,
+    terrainState.cells,
+    hydrologyState.cells,
+    atmosphereState.cells,
+    weatherState.cells,
+    resourceState.cells,
+    biomeState?.cells ?? [],
+    plantState?.cells ?? [],
+    animalState?.cells ?? [],
+  ));
 
-  return {
+  const snapshot: AtlasSnapshot = {
     worldId: world.id,
     worldSlug: world.slug,
     worldName: world.name,
@@ -1928,17 +2048,10 @@ function buildAtlasSnapshotUncached(
     biomeSummary: biomeState?.summary ?? null,
     plantSummary: plantState?.summary ?? null,
     animalSummary: animalState?.summary ?? null,
-    statistics: buildAtlasStatistics(
-      climate,
-      terrainState.summary,
-      hydrologyState.summary,
-      atmosphereState.summary,
-      weatherState.summary,
-      resourceState.summary,
-    ),
-    humans: buildAtlasHumans(world, normalizedDay),
-    settlements: buildAtlasSettlements(world, normalizedDay),
-    families: buildAtlasFamilies(world, normalizedDay),
+    statistics,
+    humans,
+    settlements,
+    families,
     fingerprint: {
       seed: fingerprint.seed,
       hash: fingerprint.hash,
@@ -1954,18 +2067,12 @@ function buildAtlasSnapshotUncached(
       atmosphereValidated: atmosphereState.summary.cellCount === terrainState.summary.cellCount,
       weatherValidated: weatherState.summary.cellCount === terrainState.summary.cellCount,
     },
-    cells: combineAtlasCells(
-      climateCells,
-      terrainState.cells,
-      hydrologyState.cells,
-      atmosphereState.cells,
-      weatherState.cells,
-      resourceState.cells,
-      biomeState?.cells ?? [],
-      plantState?.cells ?? [],
-      animalState?.cells ?? [],
-    ),
+    cells,
   };
+
+  logAtlasStageTimings(world, normalizedDay, stageTimings);
+
+  return snapshot;
 }
 
 export function buildAtlasSnapshot(
