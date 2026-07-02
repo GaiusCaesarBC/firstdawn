@@ -62,6 +62,19 @@ type DragState = {
   moved: boolean;
 };
 
+type TextureDebugMode = "final" | "mask" | "smoothed";
+
+type WeightedCellSample = {
+  cell: AtlasCell;
+  weight: number;
+};
+
+type SurfaceMaskSample = {
+  landMask: number;
+  oceanMask: number;
+  coastMask: number;
+};
+
 type PlanetGlobeRendererProps = {
   snapshot: AtlasSnapshot;
   selectedCellId: string | null;
@@ -199,7 +212,103 @@ function baseCellColor(cell: AtlasCell, layers: Record<PlanetGlobeLayerId, Plane
   return color;
 }
 
-function generateSurfaceTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>): HTMLCanvasElement {
+function getTextureDebugMode(): TextureDebugMode {
+  if (typeof window === "undefined") {
+    return "final";
+  }
+
+  const queryMode = new URLSearchParams(window.location.search).get("atlasTextureDebug");
+  const storedMode = window.localStorage.getItem("atlasTextureDebug");
+  const mode = queryMode ?? storedMode;
+
+  return mode === "mask" || mode === "smoothed" || mode === "final" ? mode : "final";
+}
+
+function sampleSurfaceMasks(samples: readonly WeightedCellSample[], center: AtlasCell): SurfaceMaskSample {
+  let landMask = 0;
+  let oceanMask = 0;
+  let coastSignal = center.isCoast ? 0.42 : 0;
+
+  for (const sample of samples) {
+    if (isWaterCell(sample.cell)) {
+      oceanMask += sample.weight;
+    } else {
+      landMask += sample.weight;
+    }
+
+    if (sample.cell.isCoast) {
+      coastSignal += sample.weight * 0.58;
+    }
+  }
+
+  const edgeMix = Math.min(landMask, oceanMask) * 2;
+
+  return {
+    landMask: clamp(landMask, 0, 1),
+    oceanMask: clamp(oceanMask, 0, 1),
+    coastMask: clamp(coastSignal + edgeMix, 0, 1),
+  };
+}
+
+function sameSurfaceColor(
+  samples: readonly WeightedCellSample[],
+  layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>,
+  surface: "land" | "ocean",
+  fallback: AtlasCell,
+): [number, number, number] {
+  let color: [number, number, number] = [0, 0, 0];
+  let totalWeight = 0;
+
+  for (const sample of samples) {
+    const water = isWaterCell(sample.cell);
+
+    if ((surface === "ocean" && !water) || (surface === "land" && water)) {
+      continue;
+    }
+
+    const sampleColor = baseCellColor(sample.cell, layers);
+    color = [
+      color[0] + sampleColor[0] * sample.weight,
+      color[1] + sampleColor[1] * sample.weight,
+      color[2] + sampleColor[2] * sample.weight,
+    ];
+    totalWeight += sample.weight;
+  }
+
+  return totalWeight > 0
+    ? [color[0] / totalWeight, color[1] / totalWeight, color[2] / totalWeight]
+    : baseCellColor(fallback, layers);
+}
+
+function compositeCoastline(
+  baseColor: [number, number, number],
+  center: AtlasCell,
+  masks: SurfaceMaskSample,
+): [number, number, number] {
+  const coastStrength = clamp(masks.coastMask, 0, 1);
+
+  if (isWaterCell(center)) {
+    const shallowWater = mixRgb(hexToRgb("#46b8d8"), hexToRgb("#0f4f9d"), center.terrainType === "DEEP_OCEAN" ? 0.72 : 0.28);
+    return mixRgb(baseColor, shallowWater, coastStrength * 0.34);
+  }
+
+  const shoreTint = center.terrainType === "BEACH" ? hexToRgb("#e4cf95") : hexToRgb("#c7b176");
+  return mixRgb(baseColor, shoreTint, coastStrength * 0.22);
+}
+
+function debugMaskColor(masks: SurfaceMaskSample, center: AtlasCell): [number, number, number] {
+  if (center.isCoast || masks.coastMask > 0.4) {
+    return [246, 211, 104];
+  }
+
+  return masks.landMask >= masks.oceanMask ? [92, 170, 86] : [36, 105, 190];
+}
+
+function generateSurfaceTexture(
+  snapshot: AtlasSnapshot,
+  layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>,
+  debugMode: TextureDebugMode,
+): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
   canvas.height = TEXTURE_HEIGHT;
@@ -234,41 +343,27 @@ function generateSurfaceTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGl
       const columnMix = columnFloat - column;
       const center = getCell(Math.floor(v * rows), Math.floor(u * columns));
       const water = isWaterCell(center);
-      const samples = [
-        getCell(row, column),
-        getCell(row, column + 1),
-        getCell(row + 1, column),
-        getCell(row + 1, column + 1),
+      const samples: WeightedCellSample[] = [
+        { cell: getCell(row, column), weight: (1 - columnMix) * (1 - rowMix) },
+        { cell: getCell(row, column + 1), weight: columnMix * (1 - rowMix) },
+        { cell: getCell(row + 1, column), weight: (1 - columnMix) * rowMix },
+        { cell: getCell(row + 1, column + 1), weight: columnMix * rowMix },
       ];
-      const sampleWeights = [
-        (1 - columnMix) * (1 - rowMix),
-        columnMix * (1 - rowMix),
-        (1 - columnMix) * rowMix,
-        columnMix * rowMix,
-      ];
-      let color: [number, number, number] = [0, 0, 0];
-      let totalWeight = 0;
-
-      samples.forEach((sample, index) => {
-        const sameSurface = isWaterCell(sample) === water || center.isCoast || sample.isCoast;
-        const weight = sampleWeights[index] * (sameSurface ? 1 : 0.18);
-        const sampleColor = baseCellColor(sample, layers);
-        color = [
-          color[0] + sampleColor[0] * weight,
-          color[1] + sampleColor[1] * weight,
-          color[2] + sampleColor[2] * weight,
-        ];
-        totalWeight += weight;
-      });
-
-      color = totalWeight > 0 ? [color[0] / totalWeight, color[1] / totalWeight, color[2] / totalWeight] : baseCellColor(center, layers);
+      const masks = sampleSurfaceMasks(samples, center);
+      const surface = water ? "ocean" : "land";
+      const smoothedColor = sameSurfaceColor(samples, layers, surface, center);
+      const color = debugMode === "mask"
+        ? debugMaskColor(masks, center)
+        : debugMode === "smoothed"
+          ? smoothedColor
+          : compositeCoastline(smoothedColor, center, masks);
 
       const relief = layerVisible(layers, "lighting")
         ? (center.ruggedness * 18 + center.elevation * 16 - center.distanceToOcean * 0.035) * layerOpacity(layers, "lighting")
         : 0;
       const grain = (noise2d(x * 0.021 + hashString(center.id) * 0.001, y * 0.019) - 0.5) * (water ? 10 : 18);
-      const coastalLift = center.isCoast ? (noise2d(x * 0.07, y * 0.04) - 0.4) * 22 : 0;
-      const final = adjustRgb(color, relief + grain + coastalLift);
+      const coastalLift = masks.coastMask > 0 ? (noise2d(x * 0.07, y * 0.04) - 0.4) * 18 * masks.coastMask : 0;
+      const final = debugMode === "mask" ? color : adjustRgb(color, relief + grain + coastalLift);
       const offset = (y * TEXTURE_WIDTH + x) * 4;
 
       image.data[offset] = final[0];
@@ -281,7 +376,6 @@ function generateSurfaceTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGl
   context.putImageData(image, 0, 0);
   return canvas;
 }
-
 function generateCloudTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
@@ -323,11 +417,11 @@ function generateCloudTexture(snapshot: AtlasSnapshot, layers: Record<PlanetGlob
   return canvas;
 }
 
-function textureKey(snapshot: AtlasSnapshot, layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>): string {
+function textureKey(snapshot: AtlasSnapshot, layers: Record<PlanetGlobeLayerId, PlanetGlobeLayerSetting>, debugMode: TextureDebugMode): string {
   const layerKey = (["terrain", "ocean", "lighting", "biomes", "vegetation", "snow", "clouds"] as PlanetGlobeLayerId[])
     .map((layer) => `${layer}:${layers[layer]?.visible ? 1 : 0}:${Math.round((layers[layer]?.opacity ?? 0) * 100)}`)
     .join("|");
-  return `${snapshot.worldId}:${snapshot.selectedDay}:${snapshot.fingerprint.shortHash}:${snapshot.cells.length}:${layerKey}`;
+  return `${snapshot.worldId}:${snapshot.selectedDay}:${snapshot.fingerprint.shortHash}:${snapshot.cells.length}:${debugMode}:${layerKey}`;
 }
 
 function makeShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader | null {
@@ -846,10 +940,11 @@ function PlanetGlobeRendererRuntime({
   );
 
   useEffect(() => {
-    const key = textureKey(snapshot, layers);
+    const debugMode = getTextureDebugMode();
+    const key = textureKey(snapshot, layers, debugMode);
 
     if (lastTextureKeyRef.current !== key || !textureCanvasRef.current || !cloudCanvasRef.current) {
-      textureCanvasRef.current = generateSurfaceTexture(snapshot, layers);
+      textureCanvasRef.current = generateSurfaceTexture(snapshot, layers, debugMode);
       cloudCanvasRef.current = generateCloudTexture(snapshot, layers);
       lastTextureKeyRef.current = key;
     }
