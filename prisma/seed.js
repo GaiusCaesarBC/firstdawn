@@ -78,9 +78,6 @@ async function upsertCanonicalWorld(alias) {
     update: {
       name: world.name,
       environment: world.environment,
-      status: world.status,
-      currentTick: world.currentTick,
-      timeScale: world.timeScale,
       tickDurationSeconds: world.tickDurationSeconds,
       dayLengthSeconds: world.dayLengthSeconds,
       yearLengthDays: world.yearLengthDays,
@@ -90,7 +87,6 @@ async function upsertCanonicalWorld(alias) {
       initialYear: world.initialYear,
       initialDay: world.initialDay,
       initialHour: world.initialHour,
-      currentGeneration: world.currentGeneration,
       seed: world.seed,
       description: world.description,
       protected: world.protected,

@@ -8,7 +8,9 @@ import {
 
 import { DEFAULT_WORLD_TIME_CONFIG } from "../simulation/time-engine";
 import {
+  CANONICAL_DEFAULT_WORLD_ALIASES,
   CANONICAL_PLANET_CONFIG,
+  createCanonicalDefaultWorldInput,
   createCanonicalWorldInput,
   FIRST_DAWN_CANONICAL_SEED,
   FIRST_DAWN_CANONICAL_WORLD,
@@ -328,6 +330,173 @@ async function logWorldAction(
       reason: normalizeReason(options.reason),
       metadata: actionMetadata === null ? Prisma.JsonNull : actionMetadata,
     },
+  });
+}
+
+const CANONICAL_WORLD_SYNC_FIELDS = [
+  "name",
+  "environment",
+  "tickDurationSeconds",
+  "dayLengthSeconds",
+  "yearLengthDays",
+  "axialTiltDegrees",
+  "orbitalEccentricity",
+  "initialEpochName",
+  "initialYear",
+  "initialDay",
+  "initialHour",
+  "seed",
+  "description",
+  "protected",
+] as const;
+
+const CANONICAL_PLANET_SYNC_FIELDS = [
+  "name",
+  "radiusKm",
+  "gravityMS2",
+  "massKg",
+  "rotationPeriodHours",
+  "orbitalPeriodDays",
+  "axialTiltDegrees",
+  "orbitalEccentricity",
+  "atmospherePressureKPa",
+  "atmosphereComposition",
+  "oceanCoveragePercent",
+] as const;
+
+export type CanonicalDefaultWorldSyncResult = {
+  label: string;
+  slug: string;
+  action: "created" | "repaired" | "unchanged";
+  drift: string[];
+};
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  }
+
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`)
+    .join(",")}}`;
+}
+
+function valuesMatch(left: unknown, right: unknown): boolean {
+  if (typeof left === "object" || typeof right === "object") {
+    return stableJson(left) === stableJson(right);
+  }
+
+  return left === right;
+}
+
+function canonicalPlanetData(): Prisma.PlanetCreateWithoutWorldInput {
+  return {
+    ...CANONICAL_PLANET_CONFIG,
+    atmosphereComposition: CANONICAL_PLANET_CONFIG.atmosphereComposition as Prisma.InputJsonValue,
+  };
+}
+
+function canonicalDefaultWorldUpdateData(alias: (typeof CANONICAL_DEFAULT_WORLD_ALIASES)[number]) {
+  const canonical = createCanonicalDefaultWorldInput(alias);
+
+  return Object.fromEntries(
+    CANONICAL_WORLD_SYNC_FIELDS.map((field) => [field, canonical[field]]),
+  ) as Pick<ReturnType<typeof createCanonicalDefaultWorldInput>, (typeof CANONICAL_WORLD_SYNC_FIELDS)[number]>;
+}
+
+function canonicalWorldDriftFields(
+  world: WorldWithPlanet,
+  canonical: ReturnType<typeof canonicalDefaultWorldUpdateData>,
+): string[] {
+  return CANONICAL_WORLD_SYNC_FIELDS.filter((field) => !valuesMatch(world[field], canonical[field]));
+}
+
+function canonicalPlanetDriftFields(
+  planet: WorldWithPlanet["planet"],
+  canonical: ReturnType<typeof canonicalPlanetData>,
+): string[] {
+  if (!planet) {
+    return ["planet"];
+  }
+
+  return CANONICAL_PLANET_SYNC_FIELDS
+    .filter((field) => !valuesMatch(planet[field], canonical[field]))
+    .map((field) => `planet.${field}`);
+}
+
+export async function syncCanonicalDefaultWorlds(
+  options: WorldLifecycleOptions = {},
+): Promise<CanonicalDefaultWorldSyncResult[]> {
+  return runWithWorldClient(options.client, async (client) => {
+    const results: CanonicalDefaultWorldSyncResult[] = [];
+
+    for (const alias of CANONICAL_DEFAULT_WORLD_ALIASES) {
+      const canonical = createCanonicalDefaultWorldInput(alias);
+      const { planet: _planet, ...canonicalCreateData } = canonical;
+      const worldUpdateData = canonicalDefaultWorldUpdateData(alias);
+      const planetData = canonicalPlanetData();
+      const existing = await client.world.findUnique({
+        where: { slug: alias.slug },
+        include: { planet: true },
+      });
+
+      if (!existing) {
+        const created = await client.world.create({
+          data: {
+            ...canonicalCreateData,
+            planet: {
+              create: planetData,
+            },
+          },
+        });
+
+        await logWorldAction(client, created.id, "CREATE_CANONICAL_DEFAULT_WORLD", options, {
+          slug: alias.slug,
+          label: alias.label,
+        });
+
+        results.push({ label: alias.label, slug: alias.slug, action: "created", drift: ["missing"] });
+        continue;
+      }
+
+      const drift = [
+        ...canonicalWorldDriftFields(existing, worldUpdateData),
+        ...canonicalPlanetDriftFields(existing.planet, planetData),
+      ];
+
+      if (drift.length === 0) {
+        results.push({ label: alias.label, slug: alias.slug, action: "unchanged", drift: [] });
+        continue;
+      }
+
+      await client.world.update({
+        where: { id: existing.id },
+        data: {
+          ...worldUpdateData,
+          planet: {
+            upsert: {
+              create: planetData,
+              update: planetData,
+            },
+          },
+        },
+      });
+
+      await logWorldAction(client, existing.id, "REPAIR_CANONICAL_DEFAULT_WORLD", options, {
+        slug: alias.slug,
+        label: alias.label,
+        drift,
+      });
+
+      results.push({ label: alias.label, slug: alias.slug, action: "repaired", drift });
+    }
+
+    return results;
   });
 }
 

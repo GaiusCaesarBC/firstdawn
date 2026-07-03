@@ -373,6 +373,7 @@ function causalEvent(input: {
   cellId: string;
   causes: Record<string, Prisma.InputJsonValue>;
   effects: Record<string, Prisma.InputJsonValue>;
+  identityParts?: string[];
 }): HumanCausalEvent {
   const stableEventId = [
     input.worldId,
@@ -380,6 +381,7 @@ function causalEvent(input: {
     input.tick.toString(),
     input.type.toLowerCase().replaceAll(" ", "-"),
     input.agentIds.join("-"),
+    ...(input.identityParts ?? []),
   ].join(":");
 
   return {
@@ -443,6 +445,7 @@ function communicationSystemEventToCausalEvent(event: HumanCommunicationSystemEv
       importance: event.importance,
       communicationKind: event.kind,
     },
+    identityParts: [event.id],
   });
 }
 function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint, seed: string): HumanAgent {

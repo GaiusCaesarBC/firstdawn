@@ -1,6 +1,7 @@
 export const DEFAULT_MAX_SIMULATION_YEARS = 10_000;
 export const DEFAULT_SIMULATION_CHECKPOINT_TICKS = 1_000;
 export const DEFAULT_ACCURATE_MAX_UNCONFIRMED_TICKS = 50_000;
+export const DEFAULT_SIMULATION_TRANSACTION_TIMEOUT_MS = 180_000;
 
 export type SimulationDurationUnit = "ticks" | "days" | "years";
 export type SimulationFidelityMode = "accurate" | "fast" | "turbo";
@@ -86,6 +87,16 @@ export function getConfiguredAccurateMaxUnconfirmedTicks(): number {
   return Math.max(
     1,
     Math.floor(readEnvNumber("ATLAS_ACCURATE_MAX_UNCONFIRMED_TICKS", DEFAULT_ACCURATE_MAX_UNCONFIRMED_TICKS)),
+  );
+}
+
+export function getConfiguredSimulationTransactionTimeoutMs(): number {
+  return Math.max(
+    1,
+    Math.floor(readEnvNumber(
+      "ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS",
+      DEFAULT_SIMULATION_TRANSACTION_TIMEOUT_MS,
+    )),
   );
 }
 

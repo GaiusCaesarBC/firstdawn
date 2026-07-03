@@ -177,6 +177,12 @@ type HealthTelemetry = {
   currentTick?: string | null;
 } | null;
 
+type AtlasSnapshotRequest = {
+  worldId: string;
+  day: number;
+  key: string;
+};
+
 type WorldMapAtlasClientProps = {
   worlds: AtlasWorldOption[];
   initialSnapshot: AtlasSnapshot;
@@ -270,6 +276,22 @@ const DEFAULT_SIGNAL_TOGGLES: Record<SignalToggleId, boolean> = {
 
 const TIMELINE_SPEEDS = [1, 3, 7, 30] as const;
 const MISSION_TIMELINE_SPEEDS = [1, 5, 10, 100, 1000] as const;
+const PLAYBACK_MIN_DELAY_MS = 120;
+const PLAYBACK_BUSY_RETRY_MS = 180;
+const PLAYBACK_MAX_COOLDOWN_MS = 1200;
+const HEALTH_PLAYBACK_DEBOUNCE_MS = 1200;
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function logAtlasTiming(label: string, durationMs: number, details?: Record<string, string | number | boolean | null>) {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  console.info(`[atlas:timing] ${label} ${durationMs.toFixed(1)} ms`, details ?? "");
+}
 
 const GLOBE_LAYER_DEFINITIONS: GlobeLayerDefinition[] = [
   { id: "terrain", label: "Terrain", priority: 10, description: "Base land and elevation color." },
@@ -1321,10 +1343,14 @@ function getHumanSettlement(snapshot: AtlasSnapshot, agent: AtlasHumanAgent | nu
 }
 
 function buildMissionEvents(snapshot: AtlasSnapshot, selectedCell: AtlasCell | null): MissionEvent[] {
+  const startedAt = nowMs();
   const events: MissionEvent[] = [];
+  const eventById = new Map(snapshot.humans.causalEvents.map((event) => [event.id, event]));
+  const seenEventIds = new Set<string>();
 
   for (const entry of snapshot.humans.chroniclerEntries) {
-    const matchingEvent = snapshot.humans.causalEvents.find((event) => event.id === entry.eventId);
+    const matchingEvent = eventById.get(entry.eventId);
+    seenEventIds.add(entry.eventId);
     events.push({
       id: entry.eventId,
       tick: entry.tick,
@@ -1338,18 +1364,21 @@ function buildMissionEvents(snapshot: AtlasSnapshot, selectedCell: AtlasCell | n
   }
 
   for (const event of snapshot.humans.causalEvents) {
-    if (!events.some((entry) => entry.id === event.id)) {
-      events.push({
-        id: event.id,
-        tick: event.tick,
-        category: event.type,
-        title: event.title,
-        summary: event.summary,
-        cellId: event.cellId,
-        humanId: event.agentIds[0] ?? null,
-        settlementId: null,
-      });
+    if (seenEventIds.has(event.id)) {
+      continue;
     }
+
+    seenEventIds.add(event.id);
+    events.push({
+      id: event.id,
+      tick: event.tick,
+      category: event.type,
+      title: event.title,
+      summary: event.summary,
+      cellId: event.cellId,
+      humanId: event.agentIds[0] ?? null,
+      settlementId: null,
+    });
   }
 
   for (const event of snapshot.settlements.recentEvents) {
@@ -1393,7 +1422,9 @@ function buildMissionEvents(snapshot: AtlasSnapshot, selectedCell: AtlasCell | n
     }
   }
 
-  return events.sort((left, right) => tickNumber(right.tick) - tickNumber(left.tick) || left.title.localeCompare(right.title));
+  const sortedEvents = events.sort((left, right) => tickNumber(right.tick) - tickNumber(left.tick) || left.title.localeCompare(right.title));
+  logAtlasTiming("mission-events", nowMs() - startedAt, { events: sortedEvents.length, selectedCell: selectedCell?.id ?? null });
+  return sortedEvents;
 }
 
 function getEventCategories(events: readonly MissionEvent[]): string[] {
@@ -1962,6 +1993,8 @@ export function WorldMapAtlasClient({
   const [healthTelemetry, setHealthTelemetry] = useState<HealthTelemetry>(null);
   const [renderCostMs, setRenderCostMs] = useState(0);
   const [lastSnapshotLoadMs, setLastSnapshotLoadMs] = useState(0);
+  const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
+  const [playbackLoopDelayMs, setPlaybackLoopDelayMs] = useState(0);
   const [snapshotSizeBytes, setSnapshotSizeBytes] = useState<number | null>(() => process.env.NODE_ENV === "test" ? null : JSON.stringify(initialSnapshot).length);
   const [compareDay, setCompareDay] = useState(Math.max(1, initialSnapshot.selectedDay - 1));
   const [compareSnapshot, setCompareSnapshot] = useState<AtlasSnapshot | null>(null);
@@ -2015,6 +2048,14 @@ export function WorldMapAtlasClient({
   const baseLayerBufferRef = useRef<HTMLCanvasElement | null>(null);
   const baseLayerCacheKeyRef = useRef<string>("");
   const snapshotRequestKeyRef = useRef<string>("");
+  const snapshotInFlightRef = useRef(false);
+  const snapshotRefreshingRef = useRef(false);
+  const pendingSnapshotRequestRef = useRef<AtlasSnapshotRequest | null>(null);
+  const timelinePlayingRef = useRef(timelinePlaying);
+  const lastSnapshotLoadMsRef = useRef(lastSnapshotLoadMs);
+  const healthInFlightRef = useRef(false);
+  const healthTimerRef = useRef<number | null>(null);
+  const playbackLoopDelayRef = useRef(0);
   const continentCacheRef = useRef<{ land?: { id: number; center: { row: number; column: number }; size: number }; ocean?: { id: number; center: { row: number; column: number }; size: number } } | null>(null);
 
   const selectedWorld = worlds.find((world) => world.id === selectedWorldId) ?? worlds[0];
@@ -2030,13 +2071,26 @@ const selectedHuman = selectedHumanId ? snapshot.humans.agents.find((agent) => a
 const followedCell = selectedHuman ? cellById.get(selectedHuman.currentCellId) ?? null : null;
 const inspectorCell = selectedCell;
 const observedCell = selectedCell ?? hoveredCell;
-const missionEvents = useMemo(() => buildMissionEvents(snapshot, observedCell), [observedCell, snapshot]);
+const missionEvents = useMemo(() => buildMissionEvents(snapshot, selectedCell), [selectedCell, snapshot]);
 const eventCategories = useMemo(() => getEventCategories(missionEvents), [missionEvents]);
 const filteredMissionEvents = eventCategoryFilter === "All"
   ? missionEvents
   : missionEvents.filter((event) => event.category === eventCategoryFilter);
 const latestMissionEvent = missionEvents[0] ?? null;
 const navigationDepth = getNavigationDepth(globeZoom, view.scale);
+const simulationBusy = snapshotRefreshing || isPending;
+
+  useEffect(() => {
+    timelinePlayingRef.current = timelinePlaying;
+  }, [timelinePlaying]);
+
+  useEffect(() => {
+    snapshotRefreshingRef.current = snapshotRefreshing;
+  }, [snapshotRefreshing]);
+
+  useEffect(() => {
+    lastSnapshotLoadMsRef.current = lastSnapshotLoadMs;
+  }, [lastSnapshotLoadMs]);
 
 
   useEffect(() => {
@@ -2047,7 +2101,8 @@ const navigationDepth = getNavigationDepth(globeZoom, view.scale);
     let animationFrame = 0;
     let lastPublished = 0;
     const tick = (time: number) => {
-      if (time - lastPublished > 80) {
+      const publishEveryMs = timelinePlayingRef.current || snapshotRefreshingRef.current ? 180 : 80;
+      if (time - lastPublished > publishEveryMs) {
         lastPublished = time;
         setAnimationClock(time);
       }
@@ -2141,41 +2196,94 @@ const navigationDepth = getNavigationDepth(globeZoom, view.scale);
 
 
 
-  const loadSnapshot = useEffectEvent(async (worldId: string, day: number) => {
-    try {
-      setError(null);
-      const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-      const nextSnapshot = await fetchSnapshot(worldId, day);
-      const finishedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-      setLastSnapshotLoadMs(Math.max(0, finishedAt - startedAt));
-      snapshotRequestKeyRef.current = "";
+  const applyLoadedSnapshot = useEffectEvent((nextSnapshot: AtlasSnapshot) => {
+    startTransition(() => {
       setSnapshot(nextSnapshot);
       setSelectedWorldId(nextSnapshot.worldId);
       setRequestedDay(nextSnapshot.selectedDay);
       setCommittedDay(nextSnapshot.selectedDay);
       setSelectedCellId(null);
+    });
 
-      if (followHuman && selectedHumanId) {
-        const nextHuman = nextSnapshot.humans.agents.find((agent) => agent.id === selectedHumanId);
-        const nextCell = nextHuman ? nextSnapshot.cells.find((cell) => cell.id === nextHuman.currentCellId) : null;
+    if (followHuman && selectedHumanId) {
+      const nextHuman = nextSnapshot.humans.agents.find((agent) => agent.id === selectedHumanId);
+      const nextCell = nextHuman ? nextSnapshot.cells.find((cell) => cell.id === nextHuman.currentCellId) : null;
 
-        if (nextCell) {
-          const worldTransform = createAtlasCoordinateTransform(nextSnapshot, { scale: 1, offsetX: 0, offsetY: 0 });
-          const rect = worldTransform.cellRect(nextCell);
-          const centerX = rect.x + rect.width / 2;
-          const centerY = rect.y + rect.height / 2;
-          const nextScale = clamp(Math.max(view.scale, 1.6), MIN_SCALE, MAX_SCALE);
-          setView({
-            scale: nextScale,
-            offsetX: canvasSize.width / 2 - centerX * nextScale,
-            offsetY: canvasSize.height / 2 - centerY * nextScale,
-          });
-        }
+      if (nextCell) {
+        const worldTransform = createAtlasCoordinateTransform(nextSnapshot, { scale: 1, offsetX: 0, offsetY: 0 });
+        const rect = worldTransform.cellRect(nextCell);
+        const centerX = rect.x + rect.width / 2;
+        const centerY = rect.y + rect.height / 2;
+        const nextScale = clamp(Math.max(view.scale, 1.6), MIN_SCALE, MAX_SCALE);
+        setView({
+          scale: nextScale,
+          offsetX: canvasSize.width / 2 - centerX * nextScale,
+          offsetY: canvasSize.height / 2 - centerY * nextScale,
+        });
+      }
+    }
+  });
+
+  const drainSnapshotQueue = useEffectEvent(async () => {
+    if (snapshotInFlightRef.current) {
+      return;
+    }
+
+    const request = pendingSnapshotRequestRef.current;
+
+    if (!request) {
+      return;
+    }
+
+    pendingSnapshotRequestRef.current = null;
+    snapshotInFlightRef.current = true;
+    snapshotRefreshingRef.current = true;
+    setSnapshotRefreshing(true);
+    setError(null);
+
+    const startedAt = nowMs();
+
+    try {
+      const nextSnapshot = await fetchSnapshot(request.worldId, request.day);
+      const durationMs = Math.max(0, nowMs() - startedAt);
+      lastSnapshotLoadMsRef.current = durationMs;
+      setLastSnapshotLoadMs(durationMs);
+      logAtlasTiming("snapshot-refresh", durationMs, { worldId: request.worldId, day: request.day });
+
+      const pendingAfterFetch = (() => pendingSnapshotRequestRef.current as AtlasSnapshotRequest | null)();
+
+      if (!pendingAfterFetch || pendingAfterFetch.key === request.key) {
+        applyLoadedSnapshot(nextSnapshot);
+      } else {
+        logAtlasTiming("snapshot-refresh-stale-skip", durationMs, { worldId: request.worldId, day: request.day });
       }
     } catch (loadError) {
-      snapshotRequestKeyRef.current = "";
-      setError(loadError instanceof Error ? loadError.message : "Unable to load atlas snapshot.");
+      if (!pendingSnapshotRequestRef.current) {
+        snapshotRequestKeyRef.current = "";
+        setError(loadError instanceof Error ? loadError.message : "Unable to load atlas snapshot.");
+      }
+    } finally {
+      snapshotInFlightRef.current = false;
+
+      if (pendingSnapshotRequestRef.current) {
+        void drainSnapshotQueue();
+      } else {
+        snapshotRefreshingRef.current = false;
+        setSnapshotRefreshing(false);
+      }
     }
+  });
+
+  const scheduleSnapshotLoad = useEffectEvent((worldId: string, day: number) => {
+    const requestKey = worldId + ":" + day;
+
+    if (snapshotRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    snapshotRequestKeyRef.current = requestKey;
+    pendingSnapshotRequestRef.current = { worldId, day, key: requestKey };
+    void drainSnapshotQueue();
   });
 
   useEffect(() => {
@@ -2183,16 +2291,7 @@ const navigationDepth = getNavigationDepth(globeZoom, view.scale);
       return;
     }
 
-    const requestKey = selectedWorldId + ":" + deferredCommittedDay;
-
-    if (snapshotRequestKeyRef.current === requestKey) {
-      return;
-    }
-
-    snapshotRequestKeyRef.current = requestKey;
-    startTransition(() => {
-      void loadSnapshot(selectedWorldId, deferredCommittedDay);
-    });
+    scheduleSnapshotLoad(selectedWorldId, deferredCommittedDay);
   }, [deferredCommittedDay, selectedWorldId, snapshot.selectedDay, snapshot.worldId]);
 
   useEffect(() => {
@@ -2219,56 +2318,132 @@ const navigationDepth = getNavigationDepth(globeZoom, view.scale);
     }
   }, [selectedCellId, selectedHumanId, snapshot.selectedDay, snapshot.worldId]);
 
+  const loadHealthTelemetry = useEffectEvent(async (worldId: string) => {
+    if (healthInFlightRef.current) {
+      return;
+    }
+
+    healthInFlightRef.current = true;
+    const startedAt = nowMs();
+
+    try {
+      const telemetry = await fetchHealthTelemetry(worldId);
+      logAtlasTiming("health-poll", nowMs() - startedAt, { worldId });
+      setHealthTelemetry(telemetry);
+    } catch {
+      setHealthTelemetry(null);
+    } finally {
+      healthInFlightRef.current = false;
+    }
+  });
+
   useEffect(() => {
     if (process.env.NODE_ENV === "test") {
       return;
     }
 
-    let cancelled = false;
+    if (healthTimerRef.current !== null) {
+      window.clearTimeout(healthTimerRef.current);
+      healthTimerRef.current = null;
+    }
 
-    fetchHealthTelemetry(snapshot.worldId)
-      .then((telemetry) => {
-        if (!cancelled) {
-          setHealthTelemetry(telemetry);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHealthTelemetry(null);
-        }
-      });
+    const delayMs = timelinePlaying || snapshotRefreshing ? HEALTH_PLAYBACK_DEBOUNCE_MS : 180;
+    healthTimerRef.current = window.setTimeout(() => {
+      healthTimerRef.current = null;
+
+      if (timelinePlayingRef.current || snapshotRefreshingRef.current) {
+        return;
+      }
+
+      void loadHealthTelemetry(snapshot.worldId);
+    }, delayMs);
 
     return () => {
-      cancelled = true;
+      if (healthTimerRef.current !== null) {
+        window.clearTimeout(healthTimerRef.current);
+        healthTimerRef.current = null;
+      }
     };
-  }, [snapshot.worldId, snapshot.tick]);
+  }, [snapshot.worldId, snapshot.tick, snapshotRefreshing, timelinePlaying]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === "test") {
+    if (process.env.NODE_ENV === "test" || timelinePlaying || snapshotRefreshing) {
       return;
     }
 
-    const timer = window.setTimeout(() => {
+    const measure = () => {
+      const startedAt = nowMs();
       setSnapshotSizeBytes(JSON.stringify(snapshot).length);
-    }, 0);
+      logAtlasTiming("snapshot-size-measure", nowMs() - startedAt, { day: snapshot.selectedDay });
+    };
 
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    if (idleWindow.requestIdleCallback && idleWindow.cancelIdleCallback) {
+      const handle = idleWindow.requestIdleCallback(measure, { timeout: 1200 });
+      return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+
+    const timer = window.setTimeout(measure, 120);
     return () => window.clearTimeout(timer);
-  }, [snapshot]);
+  }, [snapshot, snapshotRefreshing, timelinePlaying]);
 
   useEffect(() => {
     if (!timelinePlaying) {
       return;
     }
 
-    const interval = window.setInterval(() => {
+    let cancelled = false;
+    let timer = 0;
+    let previousLoopAt = nowMs();
+
+    const scheduleNext = (delayMs: number) => {
+      playbackLoopDelayRef.current = delayMs;
+      setPlaybackLoopDelayMs(delayMs);
+      timer = window.setTimeout(runLoop, delayMs);
+    };
+
+    const runLoop = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const loopStartedAt = nowMs();
+      const baseDelayMs = Math.max(PLAYBACK_MIN_DELAY_MS, 1500 / timelineSpeed);
+
+      if (snapshotInFlightRef.current || snapshotRefreshingRef.current) {
+        const cooldownMs = clamp(
+          Math.max(PLAYBACK_BUSY_RETRY_MS, lastSnapshotLoadMsRef.current * 0.45),
+          PLAYBACK_BUSY_RETRY_MS,
+          PLAYBACK_MAX_COOLDOWN_MS,
+        );
+        logAtlasTiming("playback-loop-delay", loopStartedAt - previousLoopAt, { delayMs: cooldownMs, reason: "snapshot-busy" });
+        previousLoopAt = loopStartedAt;
+        scheduleNext(cooldownMs);
+        return;
+      }
+
       setCommittedDay((day) => {
         const nextDay = day >= selectedWorld.yearLengthDays ? 1 : day + 1;
         setRequestedDay(nextDay);
         return nextDay;
       });
-    }, Math.max(350, 1500 / timelineSpeed));
 
-    return () => window.clearInterval(interval);
+      const elapsedMs = nowMs() - loopStartedAt;
+      logAtlasTiming("playback-loop-delay", loopStartedAt - previousLoopAt, { delayMs: baseDelayMs, speed: timelineSpeed });
+      previousLoopAt = loopStartedAt;
+      scheduleNext(Math.max(baseDelayMs, elapsedMs + PLAYBACK_MIN_DELAY_MS));
+    };
+
+    scheduleNext(Math.max(PLAYBACK_MIN_DELAY_MS, 1500 / timelineSpeed));
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [selectedWorld.yearLengthDays, timelinePlaying, timelineSpeed]);
 
   useEffect(() => {
@@ -3634,6 +3809,8 @@ const navigationDepth = getNavigationDepth(globeZoom, view.scale);
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Selected Day {requestedDay}</span>
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Loaded Day {snapshot.selectedDay}</span>
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Year {Math.floor((snapshot.selectedDay - 1) / snapshot.yearLengthDays)}</span>
+              <span className={`rounded-full border px-3 py-1.5 ${simulationBusy ? "border-dawn-gold/40 bg-dawn-gold/10 text-dawn-amber" : "border-white/10 bg-white/[0.04] text-stone-300"}`}>{simulationBusy ? "Simulation Busy" : timelinePlaying ? "Playback Ready" : "Simulation Idle"}</span>
+              {playbackLoopDelayMs > 0 ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Loop Delay {formatNumber(playbackLoopDelayMs, 0)} ms</span> : null}
             </div>
           </div>
           <div className="mt-4 border-t border-white/10 pt-3" data-testid="timeline-markers">

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { getLatestPersistedAtlasSnapshot } from "../../../../lib/simulation/snapshot-store";
 import { createHrTimer } from "../../../../lib/utils/timing";
-import { buildTimedAtlasSnapshot, normalizeAtlasSelectedDay } from "../../../../lib/worlds/map-atlas";
 import { listWorlds } from "../../../../lib/worlds/world-lifecycle";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ function parseDay(value: string | null): number | null {
   }
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
 }
 
 export async function GET(request: Request) {
@@ -31,13 +31,28 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
   }
 
-  const selectedDay = normalizeAtlasSelectedDay(world, parseDay(searchParams.get("day")));
-
-  const timedSnapshot = await timer.time(`atlas:snapshot:selected:${world.slug}`, async () =>
-    buildTimedAtlasSnapshot(world, selectedDay),
+  const persistedSnapshot = await timer.time(`atlas:persisted-snapshot:${world.slug}`, async () =>
+    getLatestPersistedAtlasSnapshot(world.id),
   );
-  timer.record(`atlas:snapshot:${timedSnapshot.timing.cacheHit ? "cache-hit" : "cache-miss"}`, timedSnapshot.timing.executionTimeMs);
+  const requestedDay = parseDay(searchParams.get("day"));
   timer.logDevBreakdown("/api/worlds/map timing");
 
-  return NextResponse.json(timedSnapshot.value);
+  if (!persistedSnapshot) {
+    return NextResponse.json(
+      { error: "No persisted Atlas snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
+    );
+  }
+
+  if (requestedDay !== null && requestedDay !== persistedSnapshot.selectedDay) {
+    return NextResponse.json(
+      {
+        error: "Requested day is not available as a persisted worker snapshot yet.",
+        availableDay: persistedSnapshot.selectedDay,
+      },
+      { status: 409 },
+    );
+  }
+
+  return NextResponse.json(persistedSnapshot.snapshot);
 }

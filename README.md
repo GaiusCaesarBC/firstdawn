@@ -52,6 +52,18 @@ Run the development server:
 npm run dev
 ```
 
+Run the headless simulation worker in a separate terminal:
+
+```bash
+npm run sim:worker
+```
+
+Run one deterministic worker pass for debugging:
+
+```bash
+npm run sim:step
+```
+
 ## Scripts
 
 ```bash
@@ -68,5 +80,6 @@ npm run prisma:validate
 * [FOUNDING.md](./FOUNDING.md)
 * [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 * [docs/PERMANENT_ARCHITECTURE.md](./docs/PERMANENT_ARCHITECTURE.md)
+* [docs/SIMULATION_WORKER.md](./docs/SIMULATION_WORKER.md)
 * [docs/QUESTIONS.md](./docs/QUESTIONS.md)
 * [docs/IDEAS.md](./docs/IDEAS.md)

@@ -11,7 +11,9 @@ import {
   SimulationSchedulerError,
 } from "../../src/lib/simulation/scheduler";
 import {
+  DEFAULT_SIMULATION_TRANSACTION_TIMEOUT_MS,
   durationToTicks,
+  getConfiguredSimulationTransactionTimeoutMs,
   getMaxSimulationTicks,
 } from "../../src/lib/simulation/simulation-limits";
 import { prisma } from "../../src/lib/worlds/world-lifecycle";
@@ -124,6 +126,27 @@ describe("simulation scheduler guardrails", () => {
       () => SimulationScheduler.advanceTicks(world.id, 1.5),
       "INVALID_TICK_COUNT",
     );
+  });
+
+  it("allows the simulation transaction timeout to be configured", () => {
+    const previousTimeout = process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS;
+
+    try {
+      delete process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS;
+      expect(getConfiguredSimulationTransactionTimeoutMs()).toBe(DEFAULT_SIMULATION_TRANSACTION_TIMEOUT_MS);
+
+      process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS = "75000";
+      expect(getConfiguredSimulationTransactionTimeoutMs()).toBe(75_000);
+
+      process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS = "not-a-number";
+      expect(getConfiguredSimulationTransactionTimeoutMs()).toBe(DEFAULT_SIMULATION_TRANSACTION_TIMEOUT_MS);
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS;
+      } else {
+        process.env.ATLAS_SIMULATION_TRANSACTION_TIMEOUT_MS = previousTimeout;
+      }
+    }
   });
 
   it("rejects tick counts above the configured world maximum", async () => {

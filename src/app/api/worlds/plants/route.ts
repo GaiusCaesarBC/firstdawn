@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 
-import {
-  getPlantEcologyDefinitions,
-  getPlantEcologyState,
-} from "../../../../lib/simulation/plant-engine";
-import { listWorlds } from "../../../../lib/worlds/world-lifecycle";
+import { getPlantEcologyDefinitions } from "../../../../lib/simulation/plant-engine";
+import { getLatestPersistedAtlasSnapshotForWorldQuery } from "../../../../lib/simulation/snapshot-store";
 
 export const dynamic = "force-dynamic";
 
@@ -17,20 +14,33 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "world query parameter is required." }, { status: 400 });
   }
 
-  const worlds = await listWorlds({ includeArchived: true });
-  const world = worlds.find((entry) => entry.id === worldQuery || entry.slug === worldQuery);
+  const resolved = await getLatestPersistedAtlasSnapshotForWorldQuery(worldQuery);
 
-  if (!world) {
+  if (!resolved) {
     return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
   }
 
-  if (!world.seed?.trim()) {
-    return NextResponse.json({ error: "Requested world does not have a deterministic seed." }, { status: 409 });
+  const persisted = resolved.snapshot;
+
+  if (!persisted) {
+    return NextResponse.json(
+      { error: "No persisted plant snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
+    );
   }
 
-  const plantState = getPlantEcologyState(world);
+  const snapshot = persisted.snapshot;
+  const summary = snapshot.plantSummary;
+
+  if (!summary) {
+    return NextResponse.json(
+      { error: "No persisted plant snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
+    );
+  }
+
   const selectedCell = cellQuery
-    ? plantState.cells.find((cell) => cell.id === cellQuery) ?? null
+    ? snapshot.cells.find((cell) => cell.id === cellQuery) ?? null
     : null;
 
   if (cellQuery && !selectedCell) {
@@ -38,19 +48,19 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
-    worldId: world.id,
-    worldSlug: world.slug,
-    worldName: world.name,
-    planetId: world.planet?.id ?? null,
-    tick: plantState.tick,
+    worldId: snapshot.worldId,
+    worldSlug: snapshot.worldSlug,
+    worldName: snapshot.worldName,
+    planetId: null,
+    tick: snapshot.tick,
     definitions: getPlantEcologyDefinitions(),
-    summary: plantState.summary,
+    summary,
     cell: selectedCell,
-    cells: cellQuery ? [] : plantState.cells,
-    bestForagingZones: plantState.summary.bestForagingZones,
-    bestTimberMaterialZones: plantState.summary.bestTimberMaterialZones,
-    biodiversityHotspots: plantState.summary.biodiversityHotspots,
-    harshestLowPlantZones: plantState.summary.harshestLowPlantZones,
-    lowResourceDeadZones: plantState.summary.lowResourceDeadZones,
+    cells: cellQuery ? [] : snapshot.cells,
+    bestForagingZones: summary.bestForagingZones,
+    bestTimberMaterialZones: summary.bestTimberMaterialZones,
+    biodiversityHotspots: summary.biodiversityHotspots,
+    harshestLowPlantZones: summary.harshestLowPlantZones,
+    lowResourceDeadZones: summary.lowResourceDeadZones,
   });
 }

@@ -19,6 +19,7 @@ import { getTerrainSummary, type TerrainSummary } from "./terrain-engine";
 import { getWeatherSummary, type WeatherSummary } from "./weather-engine";
 import {
   getConfiguredAccurateMaxUnconfirmedTicks,
+  getConfiguredSimulationTransactionTimeoutMs,
   getMaxSimulationTicks,
   getSimulationFidelityPlan,
   normalizeSimulationFidelityMode,
@@ -537,7 +538,15 @@ export class SimulationScheduler {
 
           try {
             await system.initialize?.(context);
-            result = normalizeSystemResult(await (system.run ?? system.update)(context));
+            const profileStartedAt = Date.now();
+
+result = normalizeSystemResult(await (system.run ?? system.update)(context));
+
+console.log("[sim-profile] system run", {
+  id: system.id,
+  name: system.name,
+  durationMs: Date.now() - profileStartedAt,
+});
 
             for (const event of result.events ?? []) {
               eventBus.emit(system.id, world.id, tick, event);
@@ -551,10 +560,19 @@ export class SimulationScheduler {
 
             health = result.health ?? await system.health?.(context);
 
-            if (result.success) {
-              await system.persist?.(context);
-            }
+           if (result.success) {
+  const persistStartedAt = Date.now();
 
+  await system.persist?.(context);
+
+  if (system.persist) {
+    console.log("[sim-profile] system persist", {
+      id: system.id,
+      name: system.name,
+      durationMs: Date.now() - persistStartedAt,
+    });
+  }
+}
             serialized = await system.serialize?.(context);
           } catch (error) {
             const message = formatError(error);
@@ -706,7 +724,7 @@ export class SimulationScheduler {
       {
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
         maxWait: 10_000,
-        timeout: 30_000,
+        timeout: getConfiguredSimulationTransactionTimeoutMs(),
       },
     );
   }

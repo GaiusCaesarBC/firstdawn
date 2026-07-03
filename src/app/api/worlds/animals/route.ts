@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 
 import {
   getAnimalEcologyDefinitions,
-  getAnimalEcologyState,
   getAnimalPopulationDefinitions,
 } from "../../../../lib/simulation/animal-engine";
-import { listWorlds } from "../../../../lib/worlds/world-lifecycle";
+import { getLatestPersistedAtlasSnapshotForWorldQuery } from "../../../../lib/simulation/snapshot-store";
 
 export const dynamic = "force-dynamic";
 
@@ -18,20 +17,33 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "world query parameter is required." }, { status: 400 });
   }
 
-  const worlds = await listWorlds({ includeArchived: true });
-  const world = worlds.find((entry) => entry.id === worldQuery || entry.slug === worldQuery);
+  const resolved = await getLatestPersistedAtlasSnapshotForWorldQuery(worldQuery);
 
-  if (!world) {
+  if (!resolved) {
     return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
   }
 
-  if (!world.seed?.trim()) {
-    return NextResponse.json({ error: "Requested world does not have a deterministic seed." }, { status: 409 });
+  const persisted = resolved.snapshot;
+
+  if (!persisted) {
+    return NextResponse.json(
+      { error: "No persisted animal snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
+    );
   }
 
-  const animalState = getAnimalEcologyState(world);
+  const snapshot = persisted.snapshot;
+  const summary = snapshot.animalSummary;
+
+  if (!summary) {
+    return NextResponse.json(
+      { error: "No persisted animal snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
+    );
+  }
+
   const selectedCell = cellQuery
-    ? animalState.cells.find((cell) => cell.id === cellQuery) ?? null
+    ? snapshot.cells.find((cell) => cell.id === cellQuery) ?? null
     : null;
 
   if (cellQuery && !selectedCell) {
@@ -39,22 +51,22 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
-    worldId: world.id,
-    worldSlug: world.slug,
-    worldName: world.name,
-    planetId: world.planet?.id ?? null,
-    tick: animalState.tick,
+    worldId: snapshot.worldId,
+    worldSlug: snapshot.worldSlug,
+    worldName: snapshot.worldName,
+    planetId: null,
+    tick: snapshot.tick,
     definitions: getAnimalEcologyDefinitions(),
     speciesDefinitions: getAnimalPopulationDefinitions(),
-    summary: animalState.summary,
+    summary,
     cell: selectedCell,
-    cells: cellQuery ? [] : animalState.cells,
-    bestHuntingZones: animalState.summary.huntingValueRegions,
-    highestDangerZones: animalState.summary.highestDangerZones,
-    bestDomesticationZones: animalState.summary.domesticationCandidateRegions,
-    highestBiodiversityZones: animalState.summary.biodiversityHotspots,
-    migrationCorridorCandidates: animalState.summary.migrationCorridorCandidates,
-    herbivoreRichRegions: animalState.summary.herbivoreRichRegions,
-    predatorHotspots: animalState.summary.predatorHotspots,
+    cells: cellQuery ? [] : snapshot.cells,
+    bestHuntingZones: summary.huntingValueRegions,
+    highestDangerZones: summary.highestDangerZones,
+    bestDomesticationZones: summary.domesticationCandidateRegions,
+    highestBiodiversityZones: summary.biodiversityHotspots,
+    migrationCorridorCandidates: summary.migrationCorridorCandidates,
+    herbivoreRichRegions: summary.herbivoreRichRegions,
+    predatorHotspots: summary.predatorHotspots,
   });
 }

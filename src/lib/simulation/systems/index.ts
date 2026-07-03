@@ -62,11 +62,17 @@ registerSystem(withDependencies(knowledgeSystem, ["relationships"]));
 registerSystem(withDependencies(communicationSystem, ["knowledge"]));
 registerSystem(withDependencies(settlementsSystem, ["communication"]));
 registerSystem(withDependencies(familyGenerationsSystem, ["settlements"]));
-registerSystem(withDependencies(resourceStorageSystem, ["family-generations"]));
-registerSystem(withDependencies(civilizationSystem, ["resource-storage"]));
+registerSystem(withDependencies(resourceStorageSystem, ["settlements"]));
+
+registerSystem(
+  withDependencies(civilizationSystem, [
+    "family-generations",
+    "resource-storage",
+  ]),
+);
 registerSystem(withDependencies(economySystem, ["civilization"]));
 registerSystem(withDependencies(cultureSystem, ["economy"]));
-registerSystem(withDependencies(discoverySystem, ["culture", "humans"]));
+registerSystem(withDependencies(discoverySystem, ["culture"]));
 registerSystem(withDependencies(eventGenerationSystem, ["discovery"]));
 registerSystem(withDependencies(metricsSystem, ["event-generation"]));
 registerSystem(withDependencies(saveStateSystem, ["metrics"]));

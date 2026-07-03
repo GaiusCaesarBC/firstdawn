@@ -1,11 +1,8 @@
 import { cache } from "react";
 import Link from "next/link";
 
-import {
-  buildTimedAtlasSnapshot,
-  normalizeAtlasSelectedDay,
-  type AtlasSnapshot,
-} from "../../lib/worlds/map-atlas";
+import { getLatestPersistedAtlasSnapshot } from "../../lib/simulation/snapshot-store";
+import type { AtlasSnapshot } from "../../lib/worlds/map-atlas";
 import { listAtlasWorldOptions, type WorldWithPlanet } from "../../lib/worlds/world-lifecycle";
 import { PublicWorldViewer } from "./public-world-viewer.client";
 
@@ -38,10 +35,13 @@ async function loadPublicWorldSnapshot(): Promise<PublicWorldLoadResult> {
       return {};
     }
 
-    const selectedDay = normalizeAtlasSelectedDay(selectedWorld, null);
-    const timedSnapshot = buildTimedAtlasSnapshot(selectedWorld, selectedDay);
+    const persistedSnapshot = await getLatestPersistedAtlasSnapshot(selectedWorld.id);
 
-    return { snapshot: timedSnapshot.value };
+    if (!persistedSnapshot) {
+      return { message: "No persisted public world snapshot is available yet. The simulation worker has not published one." };
+    }
+
+    return { snapshot: persistedSnapshot.snapshot };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The public world broadcast is unavailable.";
     return { message: `The living world broadcast could not be loaded. ${message}` };

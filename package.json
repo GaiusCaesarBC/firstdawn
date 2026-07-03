@@ -16,7 +16,9 @@
     "world:seed": "prisma db seed",
     "world:verify": "node scripts/verify-worlds.js",
     "world:verify-actions": "node scripts/verify-world-actions.js",
-    "profile:snapshots": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/profile-snapshots.ts"
+    "profile:snapshots": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/profile-snapshots.ts",
+    "sim:worker": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/sim-worker.ts",
+    "sim:step": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/sim-worker.ts --once"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

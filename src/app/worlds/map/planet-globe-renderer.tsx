@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AtlasCell, AtlasSnapshot } from "../../../lib/worlds/map-atlas";
 import { createAtlasCellMap, sampleProceduralTerrainColor } from "../../../lib/simulation/terrain-renderer";
@@ -992,13 +992,13 @@ function drawOverlayCanvas({
   }
 }
 
-export function PlanetGlobeRenderer(props: PlanetGlobeRendererProps) {
+export const PlanetGlobeRenderer = memo(function PlanetGlobeRenderer(props: PlanetGlobeRendererProps) {
   if (process.env.NODE_ENV === "test") {
     return null;
   }
 
   return <PlanetGlobeRendererRuntime {...props} />;
-}
+});
 
 function PlanetGlobeRendererRuntime({
   snapshot,
@@ -1027,12 +1027,29 @@ function PlanetGlobeRendererRuntime({
   const lastTextureKeyRef = useRef("");
   const textureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const cloudCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayStateRef = useRef({
+    snapshot,
+    layers,
+    events,
+    selectedCellId,
+    selectedHumanId,
+  });
   const [webglUnavailable, setWebglUnavailable] = useState(false);
 
   const selectedCell = useMemo(
     () => (selectedCellId ? snapshot.cells.find((cell) => cell.id === selectedCellId) ?? null : null),
     [selectedCellId, snapshot.cells],
   );
+
+  useEffect(() => {
+    overlayStateRef.current = {
+      snapshot,
+      layers,
+      events,
+      selectedCellId,
+      selectedHumanId,
+    };
+  }, [events, layers, selectedCellId, selectedHumanId, snapshot]);
 
   useEffect(() => {
     const debugMode = getTextureDebugMode();
@@ -1251,13 +1268,14 @@ function PlanetGlobeRendererRuntime({
         drawSphere(2, surfaceTexture, 1.055, layerOpacity(layers, "atmosphere"));
       }
 
+      const overlayState = overlayStateRef.current;
       drawOverlayCanvas({
         canvas: overlay,
-        snapshot,
-        layers,
-        events,
-        selectedCellId,
-        selectedHumanId,
+        snapshot: overlayState.snapshot,
+        layers: overlayState.layers,
+        events: overlayState.events,
+        selectedCellId: overlayState.selectedCellId,
+        selectedHumanId: overlayState.selectedHumanId,
         camera,
         pulse: time * 0.002,
       });
@@ -1281,7 +1299,7 @@ function PlanetGlobeRendererRuntime({
       gl.deleteBuffer(indexBuffer);
       gl.deleteProgram(program);
     };
-  }, [events, layers, onZoomChange, selectedCellId, selectedHumanId, snapshot]);
+  }, [layers, onZoomChange, snapshot]);
 
   useEffect(() => {
     if (!webglUnavailable || !webglCanvasRef.current || !overlayCanvasRef.current || !textureCanvasRef.current || !cloudCanvasRef.current) {
@@ -1306,13 +1324,14 @@ function PlanetGlobeRendererRuntime({
       camera.zoom += (camera.targetZoom - camera.zoom) * 0.14;
       onZoomChange(camera.zoom);
       drawFallbackPlanet(webglCanvasRef.current!, textureCanvasRef.current!, cloudCanvasRef.current!, snapshot, layers, camera);
+      const overlayState = overlayStateRef.current;
       drawOverlayCanvas({
         canvas: overlayCanvasRef.current!,
-        snapshot,
-        layers,
-        events,
-        selectedCellId,
-        selectedHumanId,
+        snapshot: overlayState.snapshot,
+        layers: overlayState.layers,
+        events: overlayState.events,
+        selectedCellId: overlayState.selectedCellId,
+        selectedHumanId: overlayState.selectedHumanId,
         camera,
         pulse: time * 0.002,
       });
@@ -1330,7 +1349,7 @@ function PlanetGlobeRendererRuntime({
         window.cancelAnimationFrame(animationFrame);
       }
     };
-  }, [events, layers, onZoomChange, selectedCellId, selectedHumanId, snapshot, webglUnavailable]);
+  }, [layers, onZoomChange, snapshot, webglUnavailable]);
 
   const zoomBy = (delta: number) => {
     const camera = cameraRef.current;

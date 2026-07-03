@@ -1,7 +1,8 @@
 import { WorldEnvironment } from "@prisma/client";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { advanceTicksWithCheckpoints } from "../simulation/scheduler";
+import { createHrTimer } from "../utils/timing";
+import { requestSimulationRun } from "../simulation/simulation-worker";
 import {
   durationToTicks,
   normalizeSimulationFidelityMode,
@@ -101,17 +102,24 @@ export async function handleWorldActionPost(request: NextRequest) {
     const confirmAccurateLongRun = readFormString(formData, "confirmAccurateLongRun") === "on";
 
     if (tickRunCount !== null) {
-      const result = await advanceTicksWithCheckpoints(world.id, tickRunCount, {
-        fidelityMode,
-        confirmAccurateLongRun,
-      });
-      const lastTick = result.lastTick?.toString() ?? world.currentTick.toString();
+      const timer = createHrTimer();
+      timer.record("simulation:ticks:requested", tickRunCount);
+      const simulationRequest = await timer.time(`simulation:request-api:${world.slug}`, async () =>
+        requestSimulationRun({
+          worldId: world.id,
+          tickCount: tickRunCount,
+          fidelityMode,
+          confirmAccurateLongRun,
+          requestedBy: "local-developer",
+          reason,
+          source: new URL(request.url).pathname,
+        }),
+      );
+      timer.logDevBreakdown("/api/worlds/actions request timing");
       return redirectToWorlds(
         request,
-        result.success ? "notice" : "error",
-        result.success
-          ? `${world.name} advanced ${result.completedTicks.toLocaleString("en-US")} tick${result.completedTicks === 1 ? "" : "s"} in ${fidelityMode} mode to ${lastTick}.`
-          : `${world.name} stopped after ${result.completedTicks.toLocaleString("en-US")} of ${result.requestedTicks.toLocaleString("en-US")} requested ticks. Failed systems: ${result.failedSystems.join(", ") || "unknown"}.`,
+        "notice",
+        `${world.name} queued ${tickRunCount.toLocaleString("en-US")} tick${tickRunCount === 1 ? "" : "s"} in ${fidelityMode} mode for the simulation worker. Request ${simulationRequest.requestLogId}.`,
       );
     }
 
