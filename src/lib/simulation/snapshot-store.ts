@@ -1,5 +1,6 @@
-import type { Prisma } from "@prisma/client";
+﻿import type { Prisma } from "@prisma/client";
 
+import { createGrid } from "./grid/grid";
 import {
   buildTimedAtlasSnapshot,
   normalizeAtlasSelectedDay,
@@ -53,10 +54,12 @@ export async function persistAtlasSnapshotForTick(
 ): Promise<PersistedAtlasSnapshotEnvelope> {
   const selectedDay = normalizeAtlasSelectedDay(world, options.selectedDay ?? null);
   const startedAt = Date.now();
-  const timedSnapshot = options.buildSnapshot
-    ? options.buildSnapshot(world, selectedDay)
-    : (() => {
-      const result = buildTimedAtlasSnapshot(world, selectedDay);
+ const grid = createGrid();
+
+const timedSnapshot = options.buildSnapshot
+  ? options.buildSnapshot(world, selectedDay)
+  : (() => {
+      const result = buildTimedAtlasSnapshot(world, selectedDay, grid);
       return { value: result.value, durationMs: result.timing.executionTimeMs };
     })();
   const durationMs = Math.max(0, Math.round(timedSnapshot.durationMs || Date.now() - startedAt));
@@ -116,32 +119,65 @@ export function readPersistedAtlasSnapshot(
   return envelope as unknown as PersistedAtlasSnapshotEnvelope;
 }
 
+function normalizePersistedAtlasSnapshot(
+  snapshot: PersistedAtlasSnapshotEnvelope,
+): PersistedAtlasSnapshotEnvelope {
+  return {
+    ...snapshot,
+    snapshot: {
+      ...snapshot.snapshot,
+      cells: snapshot.snapshot.cells.map((cell) => ({
+        ...cell,
+        animalPopulations: cell.animalPopulations ?? [],
+        ecosystemHistory: cell.ecosystemHistory ?? [],
+      })),
+    },
+  };
+}
+
+function readPersistedAtlasSnapshotValue(
+  value: Prisma.JsonValue | null,
+): PersistedAtlasSnapshotEnvelope | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    value.kind !== "atlas" ||
+    typeof value.tick !== "string" ||
+    typeof value.worldId !== "string" ||
+    typeof value.worldSlug !== "string" ||
+    !isRecord(value.snapshot)
+  ) {
+    return null;
+  }
+
+  return value as unknown as PersistedAtlasSnapshotEnvelope;
+}
+
+type PersistedAtlasSnapshotRow = {
+  atlasSnapshot: Prisma.JsonValue | null;
+};
+
 export async function getLatestPersistedAtlasSnapshot(
   worldId: string,
 ): Promise<PersistedAtlasSnapshotEnvelope | null> {
-  const ticks = await prisma.simulationTick.findMany({
-    take: 20,
-    where: { worldId },
-    orderBy: [{ tick: "desc" }, { completedAt: "desc" }],
-    select: { metadata: true },
-  });
+  const rows = await prisma.$queryRaw<PersistedAtlasSnapshotRow[]>`
+    SELECT metadata::jsonb -> 'atlasSnapshot' AS "atlasSnapshot"
+    FROM "SimulationTick"
+    WHERE "worldId" = ${worldId}
+      AND metadata IS NOT NULL
+      AND metadata::jsonb ? 'atlasSnapshot'
+    ORDER BY tick DESC, "completedAt" DESC
+    LIMIT 20
+  `;
 
-  for (const tick of ticks) {
-    const snapshot = readPersistedAtlasSnapshot(tick.metadata);
+  for (const row of rows) {
+    const snapshot = readPersistedAtlasSnapshotValue(row.atlasSnapshot);
 
-if (snapshot) {
-  return {
-  ...snapshot,
-  snapshot: {
-    ...snapshot.snapshot,
-    cells: snapshot.snapshot.cells.map((cell) => ({
-      ...cell,
-      animalPopulations: cell.animalPopulations ?? [],
-      ecosystemHistory: cell.ecosystemHistory ?? [],
-    })),
-  },
-};
-}
+    if (snapshot) {
+      return normalizePersistedAtlasSnapshot(snapshot);
+    }
   }
 
   return null;
@@ -180,3 +216,4 @@ export async function getLatestPersistedAtlasSnapshotForWorldQuery(
     snapshot: await getLatestPersistedAtlasSnapshot(world.id),
   };
 }
+

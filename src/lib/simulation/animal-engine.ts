@@ -287,7 +287,10 @@ type AnimalPopulationPersistencePayload = {
 
 type AnimalPopulationPersistenceDelegate = {
   deleteMany(input: { where: { planetCellId: { in: string[] } } }): Promise<unknown>;
-  createMany(input: { data: readonly AnimalPopulationPersistencePayload[]; skipDuplicates?: boolean }): Promise<unknown>;
+  createMany(input: {
+    data: AnimalPopulationPersistencePayload[];
+    skipDuplicates?: boolean;
+  }): Promise<unknown>;
 };
 
 type AnimalPersistenceClient = Pick<Prisma.TransactionClient, "planet" | "planetCell"> & {
@@ -2389,24 +2392,24 @@ async function persistAnimalCellSpeciesAggregates(
     return;
   }
 
-  await client.$executeRaw`
-    UPDATE "PlanetCell"
-    SET
-      "plantConsumptionRate" = ${payload.plantConsumptionRate},
-      "effectivePlantBiomass" = ${payload.effectivePlantBiomass},
-      "predationPressure" = ${payload.predationPressure},
-      "predatorPreyBalance" = ${payload.predatorPreyBalance},
-      "foodStability" = ${payload.foodStability},
-      "carryingCapacityUsage" = ${payload.carryingCapacityUsage},
-      "migrationActivity" = ${payload.migrationActivity},
-      "populationGrowthRate" = ${payload.populationGrowthRate},
-      "ecosystemHealthScore" = ${payload.ecosystemHealthScore},
-      "ecosystemHealthStatus" = ${payload.ecosystemHealthStatus},
-      "ecosystemEvents" = ${payload.ecosystemEvents},
-      "ecosystemHistory" = ${payload.ecosystemHistory},
-      "movementVectors" = ${payload.movementVectors}
-    WHERE "id" = ${planetCellId}
-  `;
+await client.$executeRaw`
+  UPDATE "PlanetCell"
+  SET
+    "plantConsumptionRate" = ${payload.plantConsumptionRate},
+    "effectivePlantBiomass" = ${payload.effectivePlantBiomass},
+    "predationPressure" = ${payload.predationPressure},
+    "predatorPreyBalance" = ${payload.predatorPreyBalance},
+    "foodStability" = ${payload.foodStability},
+    "carryingCapacityUsage" = ${payload.carryingCapacityUsage},
+    "migrationActivity" = ${payload.migrationActivity},
+    "populationGrowthRate" = ${payload.populationGrowthRate},
+    "ecosystemHealthScore" = ${payload.ecosystemHealthScore},
+    "ecosystemHealthStatus" = ${payload.ecosystemHealthStatus},
+    "ecosystemEvents" = ${JSON.stringify(payload.ecosystemEvents)}::jsonb,
+    "ecosystemHistory" = ${JSON.stringify(payload.ecosystemHistory)}::jsonb,
+    "movementVectors" = ${JSON.stringify(payload.movementVectors)}::jsonb
+  WHERE "id" = ${planetCellId}
+`;
 
   if (!supportsPopulationAdaptation) {
     return;
@@ -2421,8 +2424,8 @@ async function persistAnimalCellSpeciesAggregates(
       "averageDiseaseResistance" = ${payload.averageDiseaseResistance},
       "averageReproductiveEfficiency" = ${payload.averageReproductiveEfficiency},
       "averageClimateAdaptation" = ${payload.averageClimateAdaptation},
-      "highestAdaptedPopulation" = ${payload.highestAdaptedPopulation},
-      "lowestFitnessPopulation" = ${payload.lowestFitnessPopulation}
+     "highestAdaptedPopulation" = ${JSON.stringify(payload.highestAdaptedPopulation ?? null)}::jsonb,
+"lowestFitnessPopulation" = ${JSON.stringify(payload.lowestFitnessPopulation ?? null)}::jsonb
     WHERE "id" = ${planetCellId}
   `;
 }

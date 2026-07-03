@@ -1,4 +1,4 @@
-import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
+﻿import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
 import { getSettlementStateAtTick, type Settlement, type SettlementTickResult } from "../simulation/settlement-engine";
 import { getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
@@ -1953,11 +1953,20 @@ function buildAtlasSnapshotUncached(
   grid: SpatialGrid = createGrid(),
 ): AtlasSnapshot {
   const stageTimings: AtlasSnapshotStageTiming[] = [];
+  const fingerprint = timeAtlasStage(stageTimings, "fingerprint", () => buildWorldFingerprint(world, grid));
+  const environmentVerification = timeAtlasStage(stageTimings, "canonical:verify", () => verifyWorldAgainstCanonical(world, grid));
   const normalizedDay = normalizeAtlasSelectedDay(world, selectedDay);
   const tick = getAtlasTickForDay(world, normalizedDay);
-  const civilizationTick = BigInt(Math.max(1, normalizedDay) * HUMAN_MVA_DAY_TICKS);
-  const civilizationDayStartTick = BigInt(Math.max(0, normalizedDay - 1) * HUMAN_MVA_DAY_TICKS);
-  const settlementTick = BigInt(Math.max(0, normalizedDay - 1) * HUMAN_MVA_DAY_TICKS);
+
+  // Keep the Atlas seasonal/day-of-year view separate from the living civilization clock.
+  // normalizedDay is clamped to the configured year length, so using it for humans
+  // freezes public history around the first year. Human, family, and settlement history
+  // must follow the world's real current tick.
+  const currentTick = world.currentTick > 0n ? world.currentTick : tick;
+  const absoluteSimulationDay = Math.max(1, Math.floor(Number(currentTick) / HUMAN_MVA_DAY_TICKS) + 1);
+  const civilizationTick = currentTick;
+  const civilizationDayStartTick = BigInt(Math.max(0, absoluteSimulationDay - 1) * HUMAN_MVA_DAY_TICKS);
+  const settlementTick = civilizationDayStartTick;
   const gridSummary = timeAtlasStage(stageTimings, "grid:summary", () => getGridSummary(grid));
   const time = timeAtlasStage(stageTimings, "time", () => getTimeStateAtTick(world, tick));
   const astronomy = timeAtlasStage(stageTimings, "astronomy", () => getAstronomyStateAtTick(world, tick));
@@ -1972,8 +1981,6 @@ function buildAtlasSnapshotUncached(
   const biomeState = timeAtlasStage(stageTimings, "biomes", () => world.seed?.trim() ? getBiomeStateAtTick(world, tick, grid) : null);
   const plantState = timeAtlasStage(stageTimings, "plants", () => world.seed?.trim() ? getPlantEcologyStateAtTick(world, tick, grid) : null);
   const animalState = timeAtlasStage(stageTimings, "animals", () => world.seed?.trim() ? getAnimalEcologyStateAtTick(world, tick, grid) : null);
-  const fingerprint = timeAtlasStage(stageTimings, "fingerprint", () => buildWorldFingerprint(world, grid));
-  const environmentVerification = timeAtlasStage(stageTimings, "canonical:verify", () => verifyWorldAgainstCanonical(world, grid));
   const statistics = timeAtlasStage(stageTimings, "statistics", () => buildAtlasStatistics(
     climate,
     terrainState.summary,
@@ -2097,3 +2104,7 @@ export function buildTimedAtlasSnapshot(
     grid.getGridSummary().totalCells,
   );
 }
+
+
+
+

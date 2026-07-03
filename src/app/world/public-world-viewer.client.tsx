@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
@@ -91,6 +91,38 @@ function getCurrentYear(snapshot: AtlasSnapshot): number {
 
 function getDayOfYear(snapshot: AtlasSnapshot): number {
   return ((snapshot.selectedDay - 1) % snapshot.yearLengthDays) + 1;
+}
+
+function getLiveTick(snapshot: AtlasSnapshot, events: readonly PublicWorldEvent[]): string {
+  const eventTick = events
+    .map((event) => tickNumber(event.tick))
+    .filter((tick) => tick > 0)
+    .sort((left, right) => right - left)[0];
+
+  if (eventTick) {
+    return eventTick.toString();
+  }
+
+  const humanTick = tickNumber(snapshot.humans.tick);
+
+  if (humanTick > 0) {
+    return humanTick.toString();
+  }
+
+  return snapshot.tick;
+}
+
+function getSimulationDayFromTick(tick: string): number {
+  const parsed = tickNumber(tick);
+  return Math.max(1, Math.floor(parsed / 24) + 1);
+}
+
+function getSimulationYearFromDay(day: number, yearLengthDays: number): number {
+  return Math.floor((day - 1) / Math.max(1, yearLengthDays));
+}
+
+function getSimulationDayOfYear(day: number, yearLengthDays: number): number {
+  return ((day - 1) % Math.max(1, yearLengthDays)) + 1;
 }
 
 function publicCategory(value: string | null | undefined): string {
@@ -287,8 +319,12 @@ export function PublicWorldViewer({ snapshot }: PublicWorldViewerProps) {
   const events = useMemo(() => buildPublicEvents(snapshot), [snapshot]);
   const latestStory = getLatestStory(events);
   const noOpCellFocus = useCallback((_cell: AtlasCell) => {}, []);
-  const day = getDayOfYear(snapshot);
-  const year = getCurrentYear(snapshot);
+  const seasonalDay = getDayOfYear(snapshot);
+  const seasonalYear = getCurrentYear(snapshot);
+  const liveTick = getLiveTick(snapshot, events);
+  const simulationDay = getSimulationDayFromTick(liveTick);
+  const simulationYear = getSimulationYearFromDay(simulationDay, snapshot.yearLengthDays);
+  const simulationDayOfYear = getSimulationDayOfYear(simulationDay, snapshot.yearLengthDays);
   const activeHumans = snapshot.humans.agents.length;
   const activeSettlements = snapshot.settlements.activeCount;
   const recentSignals = events.slice(0, 5);
@@ -333,8 +369,8 @@ export function PublicWorldViewer({ snapshot }: PublicWorldViewerProps) {
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <MetricTile detail={`Day ${day} of ${snapshot.yearLengthDays}`} label="World Date" value={`Year ${year}`} />
-              <MetricTile detail={getSeason(snapshot)} label="Season" value={`Tick ${snapshot.tick}`} />
+              <MetricTile detail={`Day ${simulationDayOfYear} of ${snapshot.yearLengthDays}`} label="World Date" value={`Year ${simulationYear}`} />
+              <MetricTile detail={`${getSeason(snapshot)} · seasonal frame Year ${seasonalYear}, Day ${seasonalDay}`} label="Current Tick" value={`Tick ${liveTick}`} />
               <MetricTile detail={`Signal depth ${globeZoom.toFixed(2)}x`} label="Status" value="Live View" />
             </div>
           </div>
@@ -396,7 +432,7 @@ export function PublicWorldViewer({ snapshot }: PublicWorldViewerProps) {
                       <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-dawn-gold">{event.category}</p>
                       <h3 className="mt-2 text-lg font-semibold text-white">{event.title}</h3>
                     </div>
-                    <p className="font-mono text-xs text-stone-500">Tick {event.tick} / Day {day}</p>
+                    <p className="font-mono text-xs text-stone-500">Tick {event.tick} / Simulation Day {getSimulationDayFromTick(event.tick)}</p>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-stone-300">{event.summary}</p>
                 </article>

@@ -1,7 +1,7 @@
-import { cache } from "react";
+﻿import { cache } from "react";
 import Link from "next/link";
 
-import { getLatestPersistedAtlasSnapshot } from "../../lib/simulation/snapshot-store";
+import { getLatestPersistedLightweightAtlasSnapshot as getLatestPersistedAtlasSnapshot } from "../../lib/simulation/persisted-lightweight-atlas";
 import type { AtlasSnapshot } from "../../lib/worlds/map-atlas";
 import { listAtlasWorldOptions, type WorldWithPlanet } from "../../lib/worlds/world-lifecycle";
 import { PublicWorldViewer } from "./public-world-viewer.client";
@@ -77,3 +77,4 @@ export default async function PublicWorldPage() {
 
   return <PublicWorldViewer snapshot={result.snapshot} />;
 }
+

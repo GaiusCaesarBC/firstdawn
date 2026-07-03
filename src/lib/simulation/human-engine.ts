@@ -981,16 +981,36 @@ export function getHumanMvaStateAtTick(
     return result;
   }
 
-  let state = initialState;
-  let result: HumanTickResult = {
-    state,
-    newEvents: [],
-    memoryEvents: [],
-    relationshipEvents: [],
-    knowledgeEvents: [],
-    communicationEvents: [],
-    chroniclerReport: createChroniclerReport(state, []),
-  };
+// Find the newest cached tick for this world
+let state = initialState;
+let result: HumanTickResult = {
+  state,
+  newEvents: [],
+  memoryEvents: [],
+  relationshipEvents: [],
+  knowledgeEvents: [],
+  communicationEvents: [],
+  chroniclerReport: createChroniclerReport(state, []),
+};
+
+let startTick = 1n;
+
+for (const cached of humanMvaStateCacheStore.states.values()) {
+  if (
+    cached.state.worldId === world.id &&
+    BigInt(cached.state.tick) < tick &&
+    BigInt(cached.state.tick) >= startTick
+  ) {
+    state = cached.state;
+    result = cached;
+    startTick = BigInt(cached.state.tick) + 1n;
+  }
+}
+
+for (let currentTick = startTick; currentTick <= tick; currentTick++) {
+  result = advanceHumanTick(state, seed, currentTick);
+  state = result.state;
+}  
 
   for (let currentTick = 1n; currentTick <= tick; currentTick += 1n) {
     result = advanceHumanTick(state, seed, currentTick);

@@ -1,13 +1,13 @@
-import { cache } from "react";
+﻿import { cache } from "react";
 import Link from "next/link";
 
-import { getLatestPersistedAtlasSnapshot } from "../../../lib/simulation/snapshot-store";
+import { getLatestPersistedLightweightAtlasSnapshot } from "../../../lib/simulation/persisted-lightweight-atlas";
 import { createHrTimer } from "../../../lib/utils/timing";
 import { toAtlasWorldOption } from "../../../lib/worlds/map-atlas";
 import {
   listAtlasWorldOptions,
 } from "../../../lib/worlds/world-lifecycle";
-import { WorldMapAtlasClient } from "./world-map-atlas-client";
+import { PublicWorldViewerClient } from "./public-world-viewer-client";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +85,7 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
 
   const selectedWorld = selectedFromVisibleWorlds ?? defaultSelectedWorld;
   const persistedSnapshot = await timer.time(`atlas:persisted-snapshot:selected:${selectedWorld.slug}`, async () =>
-    getLatestPersistedAtlasSnapshot(selectedWorld.id),
+    getLatestPersistedLightweightAtlasSnapshot(selectedWorld.id),
   );
 
   timer.logDevBreakdown("/worlds/map timing");
@@ -95,9 +95,12 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
   }
 
   return (
-    <WorldMapAtlasClient
+    <PublicWorldViewerClient
       worlds={worlds.map(toAtlasWorldOption)}
-     initialSnapshot={persistedSnapshot.snapshot}
+      selectedWorld={toAtlasWorldOption(selectedWorld)}
+      initialSnapshot={persistedSnapshot.snapshot}
     />
   );
 }
+
+
