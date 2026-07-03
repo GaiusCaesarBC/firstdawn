@@ -1,4 +1,3 @@
-import { getHumanMvaStateAtTick } from "../human-engine";
 import { HUMAN_TICK_RESULT_CACHE_KEY } from "../human-goals";
 import type { HumanTickResult } from "../human-types";
 import {
@@ -8,8 +7,17 @@ import {
   getFamilyGenerationsStateFromHumanState,
   type FamilySystemEvent,
 } from "../family-generations-engine";
-import { getSettlementStateAtTick, SETTLEMENT_TICK_RESULT_CACHE_KEY, type SettlementTickResult } from "../settlement-engine";
-import type { SimulationSystem, SimulationSystemContext, SimulationSystemEvent, SimulationSystemResult } from "./types";
+import {
+  getSettlementStateAtTick,
+  SETTLEMENT_TICK_RESULT_CACHE_KEY,
+  type SettlementTickResult,
+} from "../settlement-engine";
+import type {
+  SimulationSystem,
+  SimulationSystemContext,
+  SimulationSystemEvent,
+  SimulationSystemResult,
+} from "./types";
 
 const SYSTEM_NAME = FAMILY_GENERATIONS_SYSTEM_ID;
 const SYSTEM_LABEL = "Family & Generations Engine";
@@ -17,21 +25,41 @@ const SYSTEM_ORDER = 127;
 
 function cachedHumanResult(context: SimulationSystemContext): HumanTickResult {
   const cached = context.cache.get(HUMAN_TICK_RESULT_CACHE_KEY);
-  if (cached && typeof cached === "object" && "state" in cached && "newEvents" in cached) return cached as HumanTickResult;
-  const result = getHumanMvaStateAtTick(context.world, context.tick);
-  context.cache.set(HUMAN_TICK_RESULT_CACHE_KEY, result);
-  return result;
+
+  if (cached && typeof cached === "object" && "state" in cached && "newEvents" in cached) {
+    return cached as HumanTickResult;
+  }
+
+  throw new Error("Family Generations requires the cached human result from the humans system.");
 }
 
-function cachedSettlementResult(context: SimulationSystemContext, humanResult: HumanTickResult): SettlementTickResult {
+function cachedSettlementResult(
+  context: SimulationSystemContext,
+  humanResult: HumanTickResult,
+): SettlementTickResult {
   const cached = context.cache.get(SETTLEMENT_TICK_RESULT_CACHE_KEY);
-  if (cached && typeof cached === "object" && "settlements" in cached && "events" in cached) return cached as SettlementTickResult;
-  const previousHumanResult = context.tick > 0n ? getHumanMvaStateAtTick(context.world, context.tick - 1n) : null;
-  return getSettlementStateAtTick({ world: context.world, tick: context.tick, humanResult, previousHumanResult });
+
+  if (cached && typeof cached === "object" && "settlements" in cached && "events" in cached) {
+    return cached as SettlementTickResult;
+  }
+
+  const previousHumanResult: HumanTickResult | null = null;
+
+  const result = getSettlementStateAtTick({
+    world: context.world,
+    tick: context.tick,
+    humanResult,
+    previousHumanResult,
+  });
+
+  context.cache.set(SETTLEMENT_TICK_RESULT_CACHE_KEY, result);
+
+  return result;
 }
 
 function familyEventToSimulationEvent(event: FamilySystemEvent): SimulationSystemEvent {
   const causalEvent = familyEventToCausalEvent(event);
+
   return {
     type: causalEvent.type,
     title: event.title,
@@ -54,14 +82,15 @@ function familyEventToSimulationEvent(event: FamilySystemEvent): SimulationSyste
 export function run(context: SimulationSystemContext): SimulationSystemResult {
   const humanResult = cachedHumanResult(context);
   const settlementResult = cachedSettlementResult(context, humanResult);
-  const previousHumanResult = context.tick > 0n ? getHumanMvaStateAtTick(context.world, context.tick - 1n) : null;
+
   const result = getFamilyGenerationsStateFromHumanState({
     worldId: context.world.id,
     tick: context.tick,
     state: humanResult.state,
-    previousState: previousHumanResult?.state ?? null,
+    previousState: null,
     settlements: settlementResult,
   });
+
   const turboMode = context.fidelityMode === "turbo";
   const fastMode = context.fidelityMode === "fast";
   const emittedEvents = turboMode ? [] : fastMode ? result.events.slice(-2) : result.events;
@@ -78,7 +107,12 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
       metadata: {
         familyCount: result.families.length,
         lineageCount: result.lineages.length,
-        childCount: result.state.agents.filter((agent) => agent.ageStage === "Infant" || agent.ageStage === "Child" || agent.ageStage === "Adolescent").length,
+        childCount: result.state.agents.filter(
+          (agent) =>
+            agent.ageStage === "Infant" ||
+            agent.ageStage === "Child" ||
+            agent.ageStage === "Adolescent",
+        ).length,
       },
     },
     metadata: {

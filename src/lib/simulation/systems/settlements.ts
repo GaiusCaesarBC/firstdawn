@@ -50,7 +50,8 @@ function settlementEventToSimulationEvent(event: SettlementSystemEvent): Simulat
 
 export function run(context: SimulationSystemContext): SimulationSystemResult {
   const humanResult = cachedHumanResult(context);
-  const previousHumanResult = context.tick > 0n ? getHumanMvaStateAtTick(context.world, context.tick - 1n) : null;
+  const previousHumanResult = null;
+  
   const result = getSettlementStateAtTick({
     world: context.world,
     tick: context.tick,

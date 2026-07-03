@@ -68,6 +68,7 @@ model World {
   actionLogs    WorldActionLog[]
   planet        Planet?
   simulationTicks SimulationTick[]
+  simulationCheckpoints SimulationCheckpoint[]
 
   @@index([environment])
   @@index([status])
@@ -249,6 +250,22 @@ model SimulationTick {
   @@index([worldId, tick])
   @@index([startedAt])
   @@unique([worldId, tick])
+}
+
+model SimulationCheckpoint {
+  id        String   @id @default(cuid())
+  worldId   String
+  world     World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  systemId  String
+  tick      BigInt
+  state     Json
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([worldId, systemId, tick])
+  @@index([worldId, systemId, tick])
+  @@index([worldId, systemId])
 }
 
 model Person {

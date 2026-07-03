@@ -1,8 +1,12 @@
-import { getHumanMvaStateAtTick } from "../human-engine";
+import { createChroniclerReport } from "../chronicler";
+import { getLatestCheckpoint } from "../checkpoint-store";
+import { advanceHumanTick, spawnFirstTwoHumans } from "../human-engine";
 import { HUMAN_TICK_RESULT_CACHE_KEY, isHumanGoalEvent } from "../human-goals";
 import {
   HUMAN_SYSTEM_ID,
   type HumanCausalEvent,
+  type HumanMvaState,
+  type HumanTickResult,
 } from "../human-types";
 import type {
   SimulationSystem,
@@ -14,6 +18,43 @@ import type {
 const SYSTEM_NAME = HUMAN_SYSTEM_ID;
 const SYSTEM_LABEL = "Humans";
 const SYSTEM_ORDER = 120;
+
+type HumanRuntimeCheckpoint = {
+  tick: bigint;
+  state: HumanMvaState;
+};
+
+type HumanRuntimeCheckpointStore = {
+  states: Map<string, HumanRuntimeCheckpoint>;
+};
+
+const humanRuntimeCheckpointSymbol = Symbol.for("first-dawn.human-runtime-checkpoints");
+const humanRuntimeCheckpointStore =
+  (globalThis as unknown as Record<symbol, HumanRuntimeCheckpointStore | undefined>)[humanRuntimeCheckpointSymbol] ?? {
+    states: new Map<string, HumanRuntimeCheckpoint>(),
+  };
+
+if (!(globalThis as unknown as Record<symbol, HumanRuntimeCheckpointStore | undefined>)[humanRuntimeCheckpointSymbol]) {
+  (globalThis as unknown as Record<symbol, HumanRuntimeCheckpointStore>)[humanRuntimeCheckpointSymbol] = humanRuntimeCheckpointStore;
+}
+
+function humanRuntimeCheckpointKey(context: SimulationSystemContext): string {
+  return JSON.stringify({
+    worldId: context.world.id,
+    seed: context.world.seed?.trim() || "first-dawn-human-mva",
+  });
+}
+
+function compactHumanCheckpointState(state: HumanMvaState): HumanMvaState {
+  return {
+    ...state,
+    memories: state.memories.slice(-500),
+    communications: state.communications.slice(-100),
+    teachingAttempts: state.teachingAttempts.slice(-100),
+    knowledge: state.knowledge.slice(-500),
+    causalEvents: state.causalEvents.slice(-100),
+  };
+}
 
 function humanEventToSimulationEvent(event: HumanCausalEvent): SimulationSystemEvent {
   return {
@@ -35,12 +76,100 @@ function humanEventToSimulationEvent(event: HumanCausalEvent): SimulationSystemE
   };
 }
 
-export function run(context: SimulationSystemContext): SimulationSystemResult {
-  const result = getHumanMvaStateAtTick(context.world, context.tick);
+async function getCheckpointedHumanResult(context: SimulationSystemContext): Promise<HumanTickResult> {
+  const systemId = "humans";
+  const seed = context.world.seed?.trim() || "first-dawn-human-mva";
+  const runtimeKey = humanRuntimeCheckpointKey(context);
+  const runtimeCheckpoint = humanRuntimeCheckpointStore.states.get(runtimeKey);
+
+  const dbCheckpoint =
+    runtimeCheckpoint && runtimeCheckpoint.tick <= context.tick
+      ? null
+      : await getLatestCheckpoint<HumanMvaState>({
+          worldId: context.world.id,
+          systemId,
+          tick: context.tick,
+        });
+
+  const selectedCheckpoint =
+    runtimeCheckpoint && runtimeCheckpoint.tick <= context.tick
+      ? runtimeCheckpoint
+      : dbCheckpoint
+        ? {
+            tick: dbCheckpoint.tick,
+            state: dbCheckpoint.state,
+          }
+        : null;
+
+  let state = compactHumanCheckpointState(selectedCheckpoint?.state ?? spawnFirstTwoHumans(context.world, 0n));
+  const startTick = selectedCheckpoint ? selectedCheckpoint.tick + 1n : 1n;
+
+  console.log("[humans-checkpoint]", {
+    targetTick: context.tick.toString(),
+    checkpointSource:
+      runtimeCheckpoint && runtimeCheckpoint.tick <= context.tick
+        ? "runtime"
+        : dbCheckpoint
+          ? "database"
+          : "spawn",
+    checkpointTick: selectedCheckpoint?.tick.toString() ?? "none",
+    startTick: startTick.toString(),
+    replayTicks: context.tick >= startTick ? (context.tick - startTick + 1n).toString() : "0",
+    agents: state.agents.length,
+    memories: state.memories.length,
+    communications: state.communications.length,
+    teachingAttempts: state.teachingAttempts.length,
+    knowledge: state.knowledge.length,
+    causalEvents: state.causalEvents.length,
+  });
+
+  let result: HumanTickResult = {
+    state,
+    newEvents: [],
+    memoryEvents: [],
+    relationshipEvents: [],
+    knowledgeEvents: [],
+    communicationEvents: [],
+    chroniclerReport: createChroniclerReport(state, []),
+  };
+
+  for (let currentTick = startTick; currentTick <= context.tick; currentTick += 1n) {
+    console.time(`[humans] advance ${currentTick.toString()}`);
+    result = advanceHumanTick(result.state, seed, currentTick);
+    console.timeEnd(`[humans] advance ${currentTick.toString()}`);
+
+    state = compactHumanCheckpointState(result.state);
+
+    humanRuntimeCheckpointStore.states.set(runtimeKey, {
+      tick: currentTick,
+      state,
+    });
+
+    result = {
+      ...result,
+      state,
+      chroniclerReport: createChroniclerReport(state, result.newEvents),
+    };
+  }
+
+  if (context.tick < startTick) {
+    humanRuntimeCheckpointStore.states.set(runtimeKey, {
+      tick: selectedCheckpoint?.tick ?? context.tick,
+      state,
+    });
+  }
+
+  return result;
+}
+
+export async function run(context: SimulationSystemContext): Promise<SimulationSystemResult> {
+  const result = await getCheckpointedHumanResult(context);
   const agentsAlive = result.state.agents.filter((agent) => agent.isAlive).length;
   const turboMode = context.fidelityMode === "turbo";
   const fastMode = context.fidelityMode === "fast";
+
   context.cache.set(HUMAN_TICK_RESULT_CACHE_KEY, result);
+
   const behaviorEvents = result.newEvents.filter((event) => !isHumanGoalEvent(event));
   const emittedEvents = turboMode ? [] : fastMode ? behaviorEvents.slice(-2) : behaviorEvents;
   const chroniclerReport = turboMode
@@ -64,10 +193,11 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
     },
     metadata: {
       deterministic: true,
-      persistent: false,
+      persistent: true,
       implementationLayer: "minimum viable agent foundation",
       forbiddenSystemsImplemented: [],
-      replayedFromSpawn: true,
+      checkpointed: true,
+      checkpointPersistence: "runtime-memory-with-database-seed",
       agents: result.state.agents.map((agent) => ({
         id: agent.id,
         sex: agent.sex,
@@ -118,6 +248,7 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
     },
   };
 }
+
 export const humansSystem: SimulationSystem = {
   id: SYSTEM_NAME,
   name: SYSTEM_NAME,
