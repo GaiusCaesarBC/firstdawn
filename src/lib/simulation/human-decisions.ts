@@ -47,6 +47,22 @@ function findRelationship(
   );
 }
 
+type HumanDecisionPhase = "survival" | "recovery" | "discretionary";
+
+function decisionPhaseFor(agent: HumanAgent): HumanDecisionPhase {
+  const urgentNeed = Math.max(agent.needs.hunger, agent.needs.thirst, agent.needs.fatigue, agent.needs.safety);
+
+  if (urgentNeed >= 0.72 || agent.emotions.fear >= 0.68 || agent.emotions.distress >= 0.7) {
+    return "survival";
+  }
+
+  if (agent.needs.hunger >= 0.55 || agent.needs.thirst >= 0.55 || agent.needs.fatigue >= 0.6 || agent.needs.safety >= 0.55) {
+    return "recovery";
+  }
+
+  return "discretionary";
+}
+
 export function createActionCandidates(
   agent: HumanAgent,
   others: readonly HumanAgent[],
@@ -69,7 +85,8 @@ export function createActionCandidates(
   const curiosity = agent.curiosityProfile;
   const motivations = agent.motivations;
   const topMotivation = dominantMotivation(motivations);
-  const discretionary = agent.needs.hunger < 0.55 && agent.needs.thirst < 0.55 && agent.needs.fatigue < 0.6 && agent.needs.safety < 0.55;
+  const decisionPhase = decisionPhaseFor(agent);
+  const discretionary = decisionPhase === "discretionary";
 
   const candidates: HumanActionCandidate[] = [
     {
@@ -173,6 +190,7 @@ export function createActionCandidates(
         activeGoalId: agent.currentGoal?.id ?? "none",
         activeGoalType: agent.currentGoal?.type ?? "none",
         activeGoalReason: agent.currentGoal?.reason ?? "none",
+        decisionPhase,
         goalBias,
       },
     };

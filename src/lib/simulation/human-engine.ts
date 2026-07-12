@@ -525,7 +525,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
         needs: reduceNeed(agent.needs, "safety", 0.08),
         emotions: {
           ...agent.emotions,
-          fear: clamp01(agent.emotions.fear + 0.24),
+          fear: clamp01(agent.emotions.fear + 0.27),
           distress: clamp01(agent.emotions.distress + 0.14),
           comfort: clamp01(agent.emotions.comfort - 0.08),
           relief: clamp01(agent.emotions.relief * 0.85),
@@ -801,7 +801,6 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
     teachingAttempts: [],
   };
 
-  // Update curiosity profile and motivations before emotions so aggregate curiosity reflects profile.
   mutable.agents = mutable.agents.map((agent) => {
     const nextProfile = updateCuriosityProfile(agent);
     const nextMotivations = computeMotivations({ ...agent, curiosityProfile: nextProfile } as HumanAgent);
@@ -814,11 +813,6 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
       safetyStreak: nextSafetyStreak,
     };
   });
-
-  mutable.agents = mutable.agents.map((agent) => ({
-    ...agent,
-    emotions: updateEmotions(agent),
-  }));
 
   const memoryIndex = createHumanMemoryIndex(state.memories);
 
@@ -884,6 +878,17 @@ export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigin
   mutable.teachingAttempts = [...mutable.teachingAttempts, ...communicationUpdate.teachingAttempts];
   const communicationCausalEvents = communicationUpdate.communicationEvents.map((event) => communicationSystemEventToCausalEvent(event, mutable.agents));
   mutable.events.push(...communicationCausalEvents);
+
+  mutable.agents = mutable.agents.map((agent) => {
+    const emotions = updateEmotions(agent);
+    const motivations = computeMotivations({ ...agent, emotions } as HumanAgent);
+
+    return {
+      ...agent,
+      emotions,
+      motivations,
+    };
+  });
 
   mutable.agents = mutable.agents.map((agent) => updateTheoryOfMind(agent, mutable.agents, tick));
 
