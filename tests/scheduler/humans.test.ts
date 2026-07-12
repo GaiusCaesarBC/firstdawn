@@ -121,7 +121,7 @@ describe("Human MVA foundation", () => {
     expect(result.state.agents.some((agent) => agent.emotions.relief > initial.agents[0].emotions.relief)).toBe(true);
   });
 
-  it("lowers distress after a successful food or water action", () => {
+  it("lowers distress and preserves relief after a successful food or water action", () => {
     const initial = spawnFirstTwoHumans(world, 0n);
     const [thirstyAgent] = initial.agents;
     const thirstyState: HumanMvaState = {
@@ -142,6 +142,7 @@ describe("Human MVA foundation", () => {
     expect(after?.lastDecision?.action).toBe("drink");
     expect(after?.emotions.distress).toBeLessThan(0.55);
     expect(after?.emotions.relief).toBeGreaterThan(thirstyAgent.emotions.relief);
+    expect(after?.emotions.relief).toBeGreaterThan(0.42);
   });
 
   it("raises fear strongly when a serious safety threat causes a failed check", () => {

@@ -94,6 +94,18 @@ function pressureAbove(value: number, threshold: number): number {
   return clamp01((value - threshold) / (1 - threshold));
 }
 
+const HUMAN_RELIEF_DECAY = 0.96;
+const HUMAN_RELIEF_DISTRESS_BUFFER = 0.14;
+const HUMAN_RELIEF_COMFORT_WEIGHT = 0.22;
+const HUMAN_RELIEF_SAFE_RECOVERY_WEIGHT = 0.03;
+const HUMAN_RELIEF_DRINK_GAIN = 0.28;
+const HUMAN_RELIEF_EAT_GAIN = 0.23;
+const HUMAN_RELIEF_SAFETY_GAIN = 0.26;
+const HUMAN_RELIEF_FAILED_SAFETY_DECAY = 0.85;
+const HUMAN_RELIEF_REST_GAIN = 0.06;
+const HUMAN_RELIEF_OBSERVE_GAIN = 0.01;
+const HUMAN_RELIEF_EXPLORE_GAIN = 0.015;
+
 function ageStageForYears(years: number): HumanAgeStage {
   if (years < 2) {
     return "Infant";
@@ -307,11 +319,11 @@ function updateEmotions(agent: HumanAgent): HumanEmotionState {
     pressureAbove(agent.needs.fatigue, 0.78) * 0.12 +
     pressureAbove(agent.needs.safety, 0.68) * 0.24,
   );
-  const targetDistress = clamp01(ordinaryStrain + severeStrain - agent.emotions.relief * 0.08);
+  const targetDistress = clamp01(ordinaryStrain + severeStrain - agent.emotions.relief * HUMAN_RELIEF_DISTRESS_BUFFER);
   // Situational fear with confidence and familiarity
   const familiarity = agent.familiarityByCell[agent.currentCellId] ?? 0.3;
   const baseSafeRecovery = agent.needs.safety < 0.42 && targetDistress < 0.48
-    ? 0.028 + agent.emotions.comfort * 0.03 + agent.emotions.relief * 0.02 + agent.emotions.trust * 0.01
+    ? 0.028 + agent.emotions.comfort * 0.03 + agent.emotions.relief * HUMAN_RELIEF_SAFE_RECOVERY_WEIGHT + agent.emotions.trust * 0.01
     : 0.012;
   const confidenceBonus = agent.confidence * 0.06 + familiarity * 0.05 + Math.min(0.04, agent.safetyStreak * 0.002);
   const safeRecovery = baseSafeRecovery + confidenceBonus;
@@ -320,7 +332,7 @@ function updateEmotions(agent: HumanAgent): HumanEmotionState {
     : 0;
   const nextFear = clamp01(agent.emotions.fear + fearGrowth - safeRecovery);
   const nextDistress = clamp01(agent.emotions.distress * 0.35 + targetDistress * 0.65);
-  const targetComfort = clamp01(0.34 + agent.emotions.relief * 0.18 + agent.emotions.trust * 0.08 - nextDistress * 0.18 - severeThreatPressure * 0.28);
+  const targetComfort = clamp01(0.34 + agent.emotions.relief * HUMAN_RELIEF_COMFORT_WEIGHT + agent.emotions.trust * 0.08 - nextDistress * 0.18 - severeThreatPressure * 0.28);
   const fearCuriosityBrake = nextFear > 0.72 ? nextFear * 0.08 : nextFear * 0.025;
   const distressCuriosityBrake = nextDistress > 0.72 ? nextDistress * 0.07 : nextDistress * 0.02;
   const profile = agent.curiosityProfile;
@@ -334,7 +346,7 @@ function updateEmotions(agent: HumanAgent): HumanEmotionState {
     loneliness: clamp01(agent.needs.social * 0.8),
     // Aggregate curiosity derived from profile and affect
     curiosity: clamp01(profileAggregate * 0.75 + agent.personality.curiosity * 0.12 + agent.emotions.comfort * 0.06 - fearCuriosityBrake - distressCuriosityBrake - agent.needs.fatigue * 0.02),
-    relief: clamp01(agent.emotions.relief * 0.92),
+    relief: clamp01(agent.emotions.relief * HUMAN_RELIEF_DECAY),
   };
 }
 
@@ -467,7 +479,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
         distress: clamp01(agent.emotions.distress - 0.18),
         fear: clamp01(agent.emotions.fear - 0.025),
         comfort: clamp01(agent.emotions.comfort + 0.035),
-        relief: clamp01(agent.emotions.relief + 0.22),
+        relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_DRINK_GAIN),
       },
     };
     state.events.push(causalEvent({
@@ -493,7 +505,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
         distress: clamp01(agent.emotions.distress - 0.14),
         fear: clamp01(agent.emotions.fear - 0.015),
         comfort: clamp01(agent.emotions.comfort + 0.025),
-        relief: clamp01(agent.emotions.relief + 0.18),
+        relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_EAT_GAIN),
       },
     };
     state.events.push(causalEvent({
@@ -528,7 +540,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
           fear: clamp01(agent.emotions.fear + 0.27),
           distress: clamp01(agent.emotions.distress + 0.14),
           comfort: clamp01(agent.emotions.comfort - 0.08),
-          relief: clamp01(agent.emotions.relief * 0.85),
+          relief: clamp01(agent.emotions.relief * HUMAN_RELIEF_FAILED_SAFETY_DECAY),
         },
         confidence: clamp01(agent.confidence * 0.96),
         safetyStreak: 0,
@@ -541,7 +553,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
           fear: clamp01(agent.emotions.fear - 0.12),
           distress: clamp01(agent.emotions.distress - 0.08),
           comfort: clamp01(agent.emotions.comfort + 0.08),
-          relief: clamp01(agent.emotions.relief + 0.2),
+          relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_SAFETY_GAIN),
         },
         confidence: clamp01(agent.confidence + 0.05),
         familiarityByCell: {
@@ -582,7 +594,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
         ...agent.emotions,
         distress: clamp01(agent.emotions.distress - 0.05),
         comfort: clamp01(agent.emotions.comfort + 0.08),
-        relief: clamp01(agent.emotions.relief + 0.04),
+        relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_REST_GAIN),
       },
       confidence: clamp01(agent.confidence + 0.005),
     };
@@ -703,7 +715,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
       emotions: {
         ...agent.emotions,
         comfort: clamp01(agent.emotions.comfort + 0.015),
-        relief: clamp01(agent.emotions.relief + 0.01),
+        relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_OBSERVE_GAIN),
       },
       curiosityProfile: {
         ...agent.curiosityProfile,
@@ -733,7 +745,7 @@ function applyDecision(agent: HumanAgent, state: MutableTickState, tick: bigint,
       ...agent,
       emotions: {
         ...agent.emotions,
-        relief: clamp01(agent.emotions.relief + 0.015),
+        relief: clamp01(agent.emotions.relief + HUMAN_RELIEF_EXPLORE_GAIN),
       },
       curiosityProfile: {
         ...agent.curiosityProfile,
