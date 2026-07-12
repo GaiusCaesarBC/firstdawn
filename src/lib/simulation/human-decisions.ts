@@ -1,5 +1,6 @@
 import type {
   HumanActionCandidate,
+  HumanActionType,
   HumanAgent,
   HumanDecision,
   HumanRelationship,
@@ -35,6 +36,25 @@ function stableScoreOffset(seed: string, tick: bigint, label: string): number {
   }
 
   return ((hash >>> 0) % 10_000) / 1_000_000;
+}
+
+const ACTION_TIE_PRIORITY: Readonly<Record<HumanActionType, number>> = Object.freeze({
+  seekSafety: 90,
+  drink: 80,
+  eat: 75,
+  rest: 65,
+  communicate: 45,
+  teach: 42,
+  observeHuman: 36,
+  observeEnvironment: 34,
+  explore: 32,
+  court: 28,
+  collectObject: 24,
+  practiceSkill: 22,
+});
+
+function stableActionTieBreak(agent: HumanAgent, tick: bigint, action: HumanActionType): number {
+  return stableScoreOffset(agent.id, tick, `action-tie:${action}`);
 }
 
 function findRelationship(
@@ -202,9 +222,17 @@ export function selectHumanDecision(
   candidates: readonly HumanActionCandidate[],
   tick: bigint,
 ): HumanDecision {
-  const [selected] = [...candidates].sort((left, right) =>
-    right.expectedUtility - left.expectedUtility || left.type.localeCompare(right.type),
-  );
+  const [selected] = [...candidates].sort((left, right) => {
+    const utilityDifference = right.expectedUtility - left.expectedUtility;
+
+    if (utilityDifference !== 0) {
+      return utilityDifference;
+    }
+
+    // Equal clamped utilities use simulation semantics first, then a stable hash fallback; never English action-name order.
+    return ACTION_TIE_PRIORITY[right.type] - ACTION_TIE_PRIORITY[left.type]
+      || stableActionTieBreak(agent, tick, right.type) - stableActionTieBreak(agent, tick, left.type);
+  });
 
   if (!selected) {
     return {
