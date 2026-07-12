@@ -356,6 +356,14 @@ const PREDATOR_GUILDS = new Set<AnimalGuildKey>(["small-predators", "apex-predat
 const LOW_DENSITY_BIOMES = new Set<BiomeKey>(["ice-sheet", "volcanic-barren", "badlands-rocky", "alpine-mountain", "desert"]);
 const MIGRATION_PRESSURE_THRESHOLD = 0.14;
 const MAX_MIGRATION_FRACTION_PER_TICK = 0.08;
+const PLANT_CONSUMPTION_STRESS_THRESHOLD = 0.58;
+const PLANT_CONSUMPTION_BIOMASS_DRAWDOWN = 0.9;
+const PLANT_CONSUMPTION_REGROWTH_RECOVERY = 0.14;
+const PLANT_CONSUMPTION_FOOD_STABILITY_PENALTY = 0.24;
+const PLANT_CONSUMPTION_HERBIVORE_FOOD_PENALTY = 0.28;
+const PLANT_CONSUMPTION_OMNIVORE_FOOD_PENALTY = 0.12;
+const PLANT_CONSUMPTION_HERBIVORE_MORTALITY = 0.045;
+const PLANT_CONSUMPTION_OMNIVORE_MORTALITY = 0.015;
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -364,6 +372,10 @@ function clamp(value: number, minimum = 0, maximum = 1): number {
 function round(value: number, digits = 6): number {
   const factor = 10 ** digits;
   return Object.is(value, -0) ? 0 : Math.round(value * factor) / factor;
+}
+
+function pressureAbove(value: number, threshold: number): number {
+  return value <= threshold ? 0 : clamp((value - threshold) / Math.max(1 - threshold, 0.001));
 }
 
 function average(values: readonly number[]): number {
@@ -1400,6 +1412,57 @@ function getPlantConsumptionRate(cell: AnimalGridCell, populations: readonly Ani
   return round(clamp(demand / edibleSupply));
 }
 
+function effectiveBiomassAfterConsumption(cell: PlantGridCell, plantConsumptionRate: number): number {
+  return round(clamp(
+    cell.biomassScore * (1 - plantConsumptionRate * PLANT_CONSUMPTION_BIOMASS_DRAWDOWN)
+      + cell.regrowthRate * PLANT_CONSUMPTION_REGROWTH_RECOVERY,
+  ));
+}
+
+function applyPlantConsumptionPressure(
+  populations: readonly AnimalPopulationState[],
+  plantConsumptionRate: number,
+  effectivePlantBiomass: number,
+): readonly AnimalPopulationState[] {
+  const pressure = pressureAbove(plantConsumptionRate, PLANT_CONSUMPTION_STRESS_THRESHOLD);
+
+  if (pressure <= 0) {
+    return populations;
+  }
+
+  const biomassShortfall = 1 - effectivePlantBiomass;
+
+  return Object.freeze(populations.map((population) => {
+    if (population.population <= 0 || population.trophicLevel === "Carnivore") {
+      return population;
+    }
+
+    const foodPenalty = population.trophicLevel === "Herbivore"
+      ? PLANT_CONSUMPTION_HERBIVORE_FOOD_PENALTY
+      : PLANT_CONSUMPTION_OMNIVORE_FOOD_PENALTY;
+    const mortalityRate = pressure * biomassShortfall * (population.trophicLevel === "Herbivore"
+      ? PLANT_CONSUMPTION_HERBIVORE_MORTALITY
+      : PLANT_CONSUMPTION_OMNIVORE_MORTALITY);
+    const mortality = Math.min(population.population, Math.floor(population.population * mortalityRate));
+    const adjustedPopulation = population.population - mortality;
+    const adjustedFoodAvailability = round(clamp(population.foodAvailability - pressure * biomassShortfall * foodPenalty));
+    const adjustedHealth = round(clamp(population.health - pressure * biomassShortfall * 0.16));
+    const adjustedMigrationPressure = round(clamp(population.migrationPressure + pressure * biomassShortfall * 0.1));
+    const adjustedFitness = round(clamp(population.fitnessScore - pressure * biomassShortfall * 0.08));
+
+    return Object.freeze({
+      ...population,
+      population: adjustedPopulation,
+      foodAvailability: adjustedFoodAvailability,
+      health: adjustedHealth,
+      migrationPressure: adjustedMigrationPressure,
+      carryingCapacityUsage: population.carryingCapacity > 0 ? round(clamp(adjustedPopulation / population.carryingCapacity)) : 0,
+      fitnessScore: adjustedFitness,
+      populationTrend: round(population.populationTrend - mortality / Math.max(population.population, 1) - pressure * biomassShortfall * 0.012, 4),
+    });
+  }).sort((left, right) => right.population - left.population || right.habitatSuitability - left.habitatSuitability || left.speciesId.localeCompare(right.speciesId)));
+}
+
 function getPopulationGrowthRate(populations: readonly AnimalPopulationState[]): number {
   const present = populations.filter((population) => population.population > 0);
 
@@ -1435,7 +1498,7 @@ function getCellEcosystemMetrics(
   const herbivoreBiomass = getSpeciesBiomass(populations, definitions, "Herbivore");
   const predatorBiomass = getSpeciesBiomass(populations, definitions, "Carnivore");
   const plantConsumptionRate = getPlantConsumptionRate(cell, populations, definitions);
-  const effectivePlantBiomass = round(clamp(cell.biomassScore + cell.regrowthRate * 0.16 - plantConsumptionRate * 0.34));
+  const effectivePlantBiomass = effectiveBiomassAfterConsumption(cell, plantConsumptionRate);
   const predationPressure = round(clamp(predatorBiomass / Math.max(herbivoreBiomass * 0.28, 1) * 0.5 + cell.predatorCapacity * 0.28));
   const predatorPreyBalance = round(clamp(1 - Math.abs(predatorBiomass / Math.max(herbivoreBiomass * 0.22, 1) - 1) / 2));
   const totalPopulation = populations.reduce((total, population) => total + population.population, 0);
@@ -1448,6 +1511,7 @@ function getCellEcosystemMetrics(
       + effectivePlantBiomass * 0.24
       + cell.waterAvailabilityScore * 0.16
       + (1 - plantConsumptionRate) * 0.16
+      - plantConsumptionRate * PLANT_CONSUMPTION_FOOD_STABILITY_PENALTY
       - cell.seasonalStressScore * 0.12,
   ));
   const capacityBalance = clamp(1 - Math.abs(carryingCapacityUsage - 0.62) / 0.62);
@@ -1780,7 +1844,13 @@ function applyEcosystemDynamics(cells: readonly AnimalGridCell[], grid: SpatialG
     }).sort((left, right) => right.population - left.population || right.habitatSuitability - left.habitatSuitability || left.speciesId.localeCompare(right.speciesId));
     const movementVectors = Object.freeze((vectorsByCell.get(cell.id) ?? []).sort((left, right) => right.population - left.population || left.toCellId.localeCompare(right.toCellId)).slice(0, 8));
     const prePredationMetrics = getCellEcosystemMetrics(cell, migratedPopulations, movementVectors, definitions);
-    const finalPopulations = applyPredationMortality(migratedPopulations, prePredationMetrics.predationPressure);
+    const postPredationPopulations = applyPredationMortality(migratedPopulations, prePredationMetrics.predationPressure);
+    const postPredationMetrics = getCellEcosystemMetrics(cell, postPredationPopulations, movementVectors, definitions);
+    const finalPopulations = applyPlantConsumptionPressure(
+      postPredationPopulations,
+      postPredationMetrics.plantConsumptionRate,
+      postPredationMetrics.effectivePlantBiomass,
+    );
 
     return replaceCellPopulations(cell, finalPopulations, movementVectors, tick, definitions);
   }));

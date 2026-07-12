@@ -331,11 +331,25 @@ describe("animal ecology foundation", () => {
   it("links plant consumption to food stability and records vegetation recovery events", () => {
     const animals = getAnimalEcologyState({ ...baseWorld, currentTick: 720n });
     const heavyConsumption = animals.cells.filter((cell) => cell.plantConsumptionRate >= 0.58);
+    const lightConsumption = animals.cells.filter((cell) => cell.plantConsumptionRate < 0.32);
+    const plantConsumers = (cells: readonly AnimalGridCell[]) => cells.flatMap((cell) =>
+      cell.animalPopulations.filter((population) =>
+        population.population > 0 && (population.trophicLevel === "Herbivore" || population.trophicLevel === "Omnivore"),
+      ),
+    );
+    const stressedConsumers = plantConsumers(heavyConsumption);
+    const lightConsumers = plantConsumers(lightConsumption);
     const recoveryEvents = animals.cells.flatMap((cell) => cell.ecosystemEvents).filter((event) => event.type === "Vegetation Recovery" || event.type === "Flood Recovery");
 
     expect(heavyConsumption.length).toBeGreaterThan(0);
+    expect(lightConsumption.length).toBeGreaterThan(0);
+    expect(stressedConsumers.length).toBeGreaterThan(0);
+    expect(lightConsumers.length).toBeGreaterThan(0);
     expect(recoveryEvents.length).toBeGreaterThan(0);
     expect(heavyConsumption.every((cell) => cell.effectivePlantBiomass <= cell.biomassScore + cell.regrowthRate * 0.16)).toBe(true);
+    expect(average(heavyConsumption.map((cell) => cell.effectivePlantBiomass))).toBeLessThan(average(heavyConsumption.map((cell) => cell.biomassScore)));
+    expect(average(stressedConsumers.map((population) => population.foodAvailability))).toBeLessThan(average(lightConsumers.map((population) => population.foodAvailability)));
+    expect(average(stressedConsumers.map((population) => population.populationTrend))).toBeLessThan(average(lightConsumers.map((population) => population.populationTrend)));
     expect(average(heavyConsumption.map((cell) => cell.foodStability))).toBeLessThan(average(animals.cells.map((cell) => Math.max(cell.foodStability, 0.001))));
     expect(animals.summary.plantConsumptionRate).toBeGreaterThan(0);
     expect(animals.summary.foodStability).toBeGreaterThan(0);
