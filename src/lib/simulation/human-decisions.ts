@@ -6,7 +6,7 @@ import type {
   HumanRelationship,
 } from "./human-types";
 import { getActionBiasForGoal } from "./human-goals";
-import { dominantMotivation } from "./human-motivations";
+import { dominantMotivation, humanSurvivalPressure, socialActionSurvivalMultiplier } from "./human-motivations";
 
 function round(value: number, digits = 6): number {
   const factor = 10 ** digits;
@@ -107,6 +107,8 @@ export function createActionCandidates(
   const topMotivation = dominantMotivation(motivations);
   const decisionPhase = decisionPhaseFor(agent);
   const discretionary = decisionPhase === "discretionary";
+  const survivalPressure = humanSurvivalPressure(agent);
+  const socialSurvivalMultiplier = socialActionSurvivalMultiplier(agent);
 
   const candidates: HumanActionCandidate[] = [
     {
@@ -133,7 +135,7 @@ export function createActionCandidates(
       type: "communicate",
       targetAgentId,
       expectedUtility: targetAgentId
-        ? agent.needs.social * 0.95 + agent.personality.sociability * 0.35 + socialPull * 0.25 + firstContactBoost + (discretionary ? motivations.socialize * 0.35 : 0)
+        ? (agent.needs.social * 0.95 + agent.personality.sociability * 0.35 + socialPull * 0.25 + firstContactBoost + (discretionary ? motivations.socialize * 0.35 : 0)) * socialSurvivalMultiplier
         : 0,
       causes: {
         socialNeed: agent.needs.social,
@@ -147,7 +149,7 @@ export function createActionCandidates(
       type: "teach",
       targetAgentId,
       expectedUtility: targetAgentId
-        ? agent.personality.teachAffinity * 0.34 + (relationship?.trust ?? 0) + (discretionary ? motivations.teach * 0.3 : 0)
+        ? (agent.personality.teachAffinity * 0.34 + (relationship?.trust ?? 0) + (discretionary ? motivations.teach * 0.3 : 0)) * socialSurvivalMultiplier
         : 0,
       causes: {
         teachAffinity: agent.personality.teachAffinity,
@@ -159,7 +161,7 @@ export function createActionCandidates(
       type: "observeHuman",
       targetAgentId,
       expectedUtility: targetAgentId
-        ? agent.personality.curiosity * 0.25 + agent.emotions.curiosity * 0.2 + (discretionary ? motivations.socialize * 0.15 : 0)
+        ? (agent.personality.curiosity * 0.25 + agent.emotions.curiosity * 0.2 + (discretionary ? motivations.socialize * 0.15 : 0)) * socialSurvivalMultiplier
         : 0,
       causes: {
         curiosity: agent.personality.curiosity,
@@ -171,7 +173,7 @@ export function createActionCandidates(
       type: "court",
       targetAgentId,
       expectedUtility: targetAgentId
-        ? (relationship?.attraction ?? 0) * 0.35 + (relationship?.trust ?? 0) * 0.2
+        ? ((relationship?.attraction ?? 0) * 0.35 + (relationship?.trust ?? 0) * 0.2) * socialSurvivalMultiplier
         : 0,
       causes: {
         attraction: relationship?.attraction ?? 0,
@@ -211,6 +213,8 @@ export function createActionCandidates(
         activeGoalType: agent.currentGoal?.type ?? "none",
         activeGoalReason: agent.currentGoal?.reason ?? "none",
         decisionPhase,
+        survivalPressure,
+        socialSurvivalMultiplier,
         goalBias,
       },
     };

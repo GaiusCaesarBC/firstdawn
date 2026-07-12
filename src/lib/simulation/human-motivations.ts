@@ -17,6 +17,28 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, round(value)));
 }
 
+function pressureAbove(value: number, threshold: number): number {
+  return value <= threshold ? 0 : clamp01((value - threshold) / (1 - threshold));
+}
+
+// Above this pressure, discretionary social behavior yields to immediate survival recovery.
+export const HUMAN_SOCIAL_SURVIVAL_PRESSURE_THRESHOLD = 0.68;
+
+export function humanSurvivalPressure(agent: HumanAgent): number {
+  return clamp01(Math.max(
+    agent.needs.hunger,
+    agent.needs.thirst,
+    agent.needs.safety,
+    agent.needs.fatigue * 0.85,
+    agent.emotions.fear,
+    agent.emotions.distress,
+  ));
+}
+
+export function socialActionSurvivalMultiplier(agent: HumanAgent): number {
+  return clamp01(1 - pressureAbove(humanSurvivalPressure(agent), HUMAN_SOCIAL_SURVIVAL_PRESSURE_THRESHOLD));
+}
+
 function needStable(agent: HumanAgent): boolean {
   return (
     agent.needs.hunger < 0.45 &&
@@ -59,6 +81,7 @@ export function computeMotivations(agent: HumanAgent): HumanMotivations {
   const distressBrake = agent.emotions.distress * 0.25;
   const brakes = Math.max(0, fearBrake + distressBrake - agent.confidence * 0.25);
   const familiarity = agent.familiarityByCell[agent.currentCellId] ?? 0.3;
+  const socialSurvivalMultiplier = socialActionSurvivalMultiplier(agent);
 
   const base: HumanMotivations = {
     explore: 0,
@@ -77,8 +100,8 @@ export function computeMotivations(agent: HumanAgent): HumanMotivations {
   base.learn = clamp01(curiosity.technical * 0.6 + curiosity.noveltySeeking * 0.2 + (stable ? 0.2 : 0) - brakes * 0.3);
   base.practiceSkills = clamp01(curiosity.technical * 0.45 + agent.personality.patience * 0.2 + (stable ? 0.15 : 0) - brakes * 0.25);
   base.improveShelter = clamp01((1 - familiarity) * 0.35 + (stable ? 0.1 : 0) + agent.needs.safety * 0.2);
-  base.socialize = clamp01((1 - agent.needs.social) * 0.2 + agent.personality.sociability * 0.3 + curiosity.social * 0.4 + (stable ? 0.15 : 0) - brakes * 0.2);
-  base.teach = clamp01(agent.personality.teachAffinity * 0.5 + agent.emotions.trust * 0.25 + (stable ? 0.1 : 0));
+  base.socialize = clamp01(((1 - agent.needs.social) * 0.2 + agent.personality.sociability * 0.3 + curiosity.social * 0.4 + (stable ? 0.15 : 0) - brakes * 0.2) * socialSurvivalMultiplier);
+  base.teach = clamp01((agent.personality.teachAffinity * 0.5 + agent.emotions.trust * 0.25 + (stable ? 0.1 : 0) - brakes * 0.2) * socialSurvivalMultiplier);
   base.collectObjects = clamp01(curiosity.noveltySeeking * 0.5 + curiosity.technical * 0.3 + (stable ? 0.1 : 0) - brakes * 0.2);
   base.restVoluntary = clamp01((stable ? 0.35 : 0.1) + agent.personality.patience * 0.1 - agent.needs.fatigue * 0.2);
 
