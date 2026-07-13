@@ -16,56 +16,43 @@ function parseDay(value: string | null): number | null {
 }
 
 export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const worldQuery = searchParams.get("world");
+  const { searchParams } = new URL(request.url);
+  const worldQuery = searchParams.get("world");
 
-    if (!worldQuery) {
-      return NextResponse.json({ error: "world query parameter is required." }, { status: 400 });
-    }
+  if (!worldQuery) {
+    return NextResponse.json({ error: "world query parameter is required." }, { status: 400 });
+  }
 
-    const timer = createHrTimer();
-    const worlds = await timer.time("db:worlds", async () => listWorlds({ includeArchived: true }));
-    const world = worlds.find((entry) => entry.id === worldQuery || entry.slug === worldQuery);
+  const timer = createHrTimer();
+  const worlds = await timer.time("db:worlds", async () => listWorlds({ includeArchived: true }));
+  const world = worlds.find((entry) => entry.id === worldQuery || entry.slug === worldQuery);
 
-    if (!world) {
-      return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
-    }
+  if (!world) {
+    return NextResponse.json({ error: "Requested world was not found." }, { status: 404 });
+  }
 
-    const persistedSnapshot = await timer.time(`atlas:persisted-lightweight-snapshot:${world.slug}`, async () =>
-      getLatestPersistedLightweightAtlasSnapshot(world.id),
-    );
+  const persistedSnapshot = await timer.time(`atlas:persisted-lightweight-snapshot:${world.slug}`, async () =>
+    getLatestPersistedLightweightAtlasSnapshot(world.id),
+  );
+  const requestedDay = parseDay(searchParams.get("day"));
+  timer.logDevBreakdown("/api/worlds/map timing");
 
-    const requestedDay = parseDay(searchParams.get("day"));
-    timer.logDevBreakdown("/api/worlds/map timing");
-
-    if (!persistedSnapshot) {
-      return NextResponse.json(
-        { error: "No persisted Atlas snapshot is available yet. Start the simulation worker or run npm run sim:step." },
-        { status: 404 },
-      );
-    }
-
-    if (requestedDay !== null && requestedDay !== persistedSnapshot.selectedDay) {
-      return NextResponse.json(
-        {
-          error: "Requested day is not available as a persisted worker snapshot yet.",
-          availableDay: persistedSnapshot.selectedDay,
-        },
-        { status: 409 },
-      );
-    }
-
-    return NextResponse.json(persistedSnapshot.snapshot);
-  } catch (error) {
-    console.error("/api/worlds/map failed", error);
-
+  if (!persistedSnapshot) {
     return NextResponse.json(
-      {
-        error: "Failed to load persisted Atlas map snapshot.",
-        message: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
+      { error: "No persisted Atlas snapshot is available yet. Start the simulation worker or run npm run sim:step." },
+      { status: 404 },
     );
   }
+
+  if (requestedDay !== null && requestedDay !== persistedSnapshot.selectedDay) {
+    return NextResponse.json(
+      {
+        error: "Requested day is not available as a persisted worker snapshot yet.",
+        availableDay: persistedSnapshot.selectedDay,
+      },
+      { status: 409 },
+    );
+  }
+
+  return NextResponse.json(persistedSnapshot.snapshot);
 }

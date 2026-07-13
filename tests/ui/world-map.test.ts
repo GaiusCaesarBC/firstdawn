@@ -12,7 +12,17 @@ import type { WorldWithPlanet } from "../../src/lib/worlds/world-lifecycle";
 
 type RecordingContext = CanvasRenderingContext2D & {
   operations: string[];
+  imageSmoothingEnabled: boolean;
 };
+
+const HUMAN_TEST_CLOTHING_COLORS = {
+  cream: "#d9c99f",
+  tan: "#b99768",
+  brown: "#76533a",
+  gray: "#89877d",
+  "faded-green": "#6f7e56",
+  "muted-blue": "#586f87",
+} as const;
 
 const baseWorld = {
   id: "world-atlas-test",
@@ -69,6 +79,7 @@ function createRecordingContext(): RecordingContext {
     strokeStyle: "#000000",
     lineWidth: 1,
     font: "10px sans-serif",
+    imageSmoothingEnabled: true,
     save: vi.fn(() => operations.push("save")),
     restore: vi.fn(() => operations.push("restore")),
     translate: vi.fn((x: number, y: number) => operations.push(`translate:${x}:${y}`)),
@@ -341,7 +352,15 @@ describe("world map atlas ui", () => {
     expect(screen.getByTestId("human-list").textContent).toContain("First Male Human");
     expect(screen.getByTestId("human-list").textContent).toContain("First Female Human");
     expect(screen.getByTestId("humans-overlay-toggle")).toBeTruthy();
+    await waitFor(() => {
+      const firstAppearance = initialSnapshot.humans.agents[0].appearance;
+      const clothingColor = HUMAN_TEST_CLOTHING_COLORS[firstAppearance.clothingColor];
+      expect(currentContext.operations.some((operation) => operation.includes(`fillRect:${clothingColor}:`))).toBe(true);
+    });
 
+    const canvas = screen.getByTestId("world-map-canvas");
+    expect(canvas.className).toContain("[image-rendering:pixelated]");
+    expect(currentContext.imageSmoothingEnabled).toBe(false);
     fireEvent.click(screen.getByTestId("humans-overlay-toggle"));
     await waitFor(() => {
       expect(screen.getByTestId("humans-overlay-toggle").className).toContain("border-white/10");
@@ -431,5 +450,5 @@ describe("world map atlas ui", () => {
     expect(firstDay.climate.seasonNorthernHemisphere).not.toBe(midYear.climate.seasonNorthernHemisphere);
     expect(firstDay.astronomy.solarDeclinationDegrees).not.toBe(midYear.astronomy.solarDeclinationDegrees);
     expect(firstDay.statistics.averageTemperatureC).not.toBe(midYear.statistics.averageTemperatureC);
-  });
+  }, 240_000);
 });

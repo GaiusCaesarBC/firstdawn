@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { createChroniclerReport } from "./chronicler";
+import { createHumanAppearance, normalizeHumanAppearances } from "./human-appearance";
 import { createHumanCommunication, updateCommunicationEngine } from "./human-communication";
 import { evaluateGoalDecision } from "./human-goals";
 import { createActionCandidates, selectHumanDecision } from "./human-decisions";
@@ -200,6 +201,12 @@ function createHumanAgent(
     id: `${worldId}:first-human-${sex}`,
     worldId,
     sex,
+    appearance: createHumanAppearance({
+      worldSeed: seed,
+      humanId: `${worldId}:first-human-${sex}`,
+      birthTick: (tick - BigInt(ageDays)).toString(),
+      sex,
+    }),
     isAlive: true,
     birthTick: (tick - BigInt(ageDays)).toString(),
     ageDays,
@@ -799,8 +806,9 @@ function updateTheoryOfMind(agent: HumanAgent, agents: readonly HumanAgent[], ti
 }
 
 export function advanceHumanTick(state: HumanMvaState, seed: string, tick: bigint): HumanTickResult {
+  const normalizedAgents = normalizeHumanAppearances(state.agents, seed);
   const mutable: MutableTickState = {
-    agents: state.agents.map((agent) => ({
+    agents: normalizedAgents.map((agent) => ({
       ...agent,
       needs: updateNeeds(agent.needs),
       ageDays: Math.max(0, agent.ageDays + 1),

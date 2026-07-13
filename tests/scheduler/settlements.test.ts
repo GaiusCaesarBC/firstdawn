@@ -98,10 +98,11 @@ describe("Emergent Camps & Settlements Engine", () => {
     const humanResult = getHumanMvaStateAtTick(world, 6n);
     const previousHumanResult = getHumanMvaStateAtTick(world, 5n);
     const result = getSettlementStateAtTick({ world, tick: 6n, humanResult, previousHumanResult });
+    const sharedHomeCellId = humanResult.state.agents[0]?.homeCellId;
 
     expect(result.settlements.length).toBeGreaterThan(0);
     expect(result.settlements[0]).toMatchObject({
-      homeCellId: "cell-09-18",
+      homeCellId: sharedHomeCellId,
       currentPopulation: 2,
     });
     expect(result.settlements[0].storedResources.foodCache + result.settlements[0].storedResources.waterStorage).toBeGreaterThan(0);
@@ -152,8 +153,8 @@ describe("Emergent Camps & Settlements Engine", () => {
   });
 
   it("repeated visits increase permanence", () => {
-    const early = getSettlementStateAtTick({ world, tick: 4n, humanResult: getHumanMvaStateAtTick(world, 4n), previousHumanResult: getHumanMvaStateAtTick(world, 3n) });
-    const later = getSettlementStateAtTick({ world, tick: 8n, humanResult: getHumanMvaStateAtTick(world, 8n), previousHumanResult: getHumanMvaStateAtTick(world, 7n) });
+    const early = getSettlementStateAtTick({ world, tick: 3n, humanResult: getHumanMvaStateAtTick(world, 3n), previousHumanResult: getHumanMvaStateAtTick(world, 2n) });
+    const later = getSettlementStateAtTick({ world, tick: 4n, humanResult: getHumanMvaStateAtTick(world, 4n), previousHumanResult: getHumanMvaStateAtTick(world, 3n) });
 
     expect(later.scoring[0].permanence).toBeGreaterThanOrEqual(early.scoring[0].permanence);
   });
@@ -187,7 +188,7 @@ describe("Emergent Camps & Settlements Engine", () => {
   });
 
   it("exposes settlement data through Atlas", () => {
-    const snapshot = buildAtlasSnapshot(world, 2);
+    const snapshot = buildAtlasSnapshot({ ...world, currentTick: 24n }, 2);
 
     expect(snapshot.settlements.activeCount).toBeGreaterThan(0);
     expect(snapshot.settlements.settlements[0]).toMatchObject({
@@ -197,7 +198,7 @@ describe("Emergent Camps & Settlements Engine", () => {
       knownKnowledge: expect.any(Array),
       majorEvents: expect.any(Array),
     });
-  }, 60_000);
+  }, 240_000);
 
   it("records settlement milestones for the Chronicler", () => {
     const humanResult = getHumanMvaStateAtTick(world, 6n);

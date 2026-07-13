@@ -1,4 +1,4 @@
-﻿import type { AtlasSnapshot } from "../worlds/map-atlas";
+import { normalizeAtlasSnapshotHumanAppearances, type AtlasSnapshot } from "../worlds/map-atlas";
 import { prisma } from "../worlds/world-lifecycle";
 
 type PersistedLightweightAtlasSnapshot = {
@@ -84,6 +84,6 @@ export async function getLatestPersistedLightweightAtlasSnapshot(
 
   return {
     selectedDay: row.selectedDay ?? 0,
-    snapshot: row.snapshot as AtlasSnapshot,
+    snapshot: normalizeAtlasSnapshotHumanAppearances(row.snapshot as AtlasSnapshot),
   };
 }

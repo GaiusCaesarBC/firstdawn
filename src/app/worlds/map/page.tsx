@@ -2,12 +2,13 @@
 import Link from "next/link";
 
 import { getLatestPersistedLightweightAtlasSnapshot } from "../../../lib/simulation/persisted-lightweight-atlas";
+import { getWorldIdsWithPersistedAtlasSnapshots } from "../../../lib/simulation/snapshot-store";
 import { createHrTimer } from "../../../lib/utils/timing";
 import { toAtlasWorldOption } from "../../../lib/worlds/map-atlas";
 import {
   listAtlasWorldOptions,
 } from "../../../lib/worlds/world-lifecycle";
-import { PublicWorldViewerClient } from "./public-world-viewer-client";
+import { WorldMapAtlasClient } from "./world-map-atlas-client";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,31 @@ function readSearchParam(params: SearchParams, key: string): string | null {
   }
 
   return value ?? null;
+}
+
+function parseDayParam(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
+function chooseDefaultAtlasWorld(
+  worlds: Awaited<ReturnType<typeof listAtlasWorldOptions>>,
+  snapshotWorldIds: Awaited<ReturnType<typeof getWorldIdsWithPersistedAtlasSnapshots>>,
+) {
+  const hasSnapshot = (world: (typeof worlds)[number]) => snapshotWorldIds.has(world.id);
+
+  return (
+    worlds.find((world) => hasSnapshot(world) && world.status === "ACTIVE" && world.environment === "SANDBOX") ??
+    worlds.find((world) => hasSnapshot(world) && world.status === "ACTIVE") ??
+    worlds.find(hasSnapshot) ??
+    worlds.find((world) => world.status === "ACTIVE" && world.environment === "SANDBOX") ??
+    worlds[0] ??
+    null
+  );
 }
 
 function EmptyAtlasState({ message }: { message: string }) {
@@ -75,7 +101,10 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
     ? worlds.find((world) => world.id === requestedWorld || world.slug === requestedWorld) ?? null
     : null;
 
-  const defaultSelectedWorld = worlds[0] ?? allWorlds[0];
+  const availableSnapshots = await timer.time("atlas:persisted-snapshot-index", async () =>
+    getWorldIdsWithPersistedAtlasSnapshots(worlds.map((world) => world.id)),
+  );
+  const defaultSelectedWorld = chooseDefaultAtlasWorld(worlds, availableSnapshots) ?? allWorlds[0];
   timer.record("atlas:worlds:visible", worlds.length);
   timer.record("atlas:snapshot:default-skipped", Math.max(0, allWorlds.length - 1));
 
@@ -84,6 +113,24 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
   }
 
   const selectedWorld = selectedFromVisibleWorlds ?? defaultSelectedWorld;
+
+  if (!availableSnapshots.has(selectedWorld.id)) {
+    timer.logDevBreakdown("/worlds/map timing");
+    return <EmptyAtlasState message="No persisted Atlas snapshot exists yet. Start the simulation worker with npm run sim:worker, or create one deterministic snapshot with npm run sim:step." />;
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    timer.logDevBreakdown("/worlds/map timing");
+    return (
+      <WorldMapAtlasClient
+        worlds={worlds.map(toAtlasWorldOption)}
+        initialSnapshot={null}
+        initialWorldId={selectedWorld.id}
+        initialDay={parseDayParam(readSearchParam(params, "day"))}
+      />
+    );
+  }
+
   const persistedSnapshot = await timer.time(`atlas:persisted-snapshot:selected:${selectedWorld.slug}`, async () =>
     getLatestPersistedLightweightAtlasSnapshot(selectedWorld.id),
   );
@@ -95,9 +142,8 @@ export default async function WorldsMapPage({ searchParams }: WorldsMapPageProps
   }
 
   return (
-    <PublicWorldViewerClient
+    <WorldMapAtlasClient
       worlds={worlds.map(toAtlasWorldOption)}
-      selectedWorld={toAtlasWorldOption(selectedWorld)}
       initialSnapshot={persistedSnapshot.snapshot}
     />
   );

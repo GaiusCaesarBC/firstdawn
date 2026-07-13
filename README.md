@@ -8,17 +8,19 @@ The public home is intended to be [FirstDawn.life](https://firstdawn.life). The 
 
 ## Foundation
 
-This repository currently establishes the foundation only:
+This repository currently contains the deterministic simulation foundation and observer surfaces:
 
 * Next.js application shell
 * TypeScript project structure
 * Tailwind CSS styling
 * Prisma schema prepared for PostgreSQL
-* Foundational simulation modules
-* Population adaptation foundation for deterministic wildlife fitness and long-term local adaptation
+* World lifecycle, scheduler, tick history, and health telemetry
+* Deterministic planet, climate, terrain, hydrology, weather, resource, biome, plant, animal, and adaptation systems
+* Human MVA foundation with agents, needs, emotions, memory, communication, teaching, and causal events
+* Early family, settlement, storage, and public world observatory surfaces
 * Project constitution, vision, roadmap, and architecture notes
 
-The first two people do not exist yet. No AI citizens have been created. No production simulation loop has been started.
+The Human MVA is not yet the final persistent human database model. Long-term persistent human life, pregnancy/birth lifecycle, childhood, aging, death, survival loops, and full civilization systems remain future work.
 
 ## Core Rule
 

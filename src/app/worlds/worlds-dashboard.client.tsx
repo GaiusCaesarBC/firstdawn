@@ -86,6 +86,13 @@ export type MissionControlWorld = {
     averageHumanRelationshipStability: number | null;
     humanSystemStatus: string | null;
   };
+  social: {
+    activeSettlements: number | null;
+    abandonedSettlements: number | null;
+    familyCount: number | null;
+    lineageCount: number | null;
+    recentSettlementEvents: number | null;
+  };
   planet: {
     landPercent: number | null;
     oceanPercent: number | null;
@@ -692,10 +699,14 @@ function renderInspectorTab(
     return (
       <div className="grid gap-3 md:grid-cols-2">
         <InspectorMetric label="Civilization Count" value="0" />
-        <InspectorMetric label="Settlement Count" value="Untracked" />
+        <InspectorMetric label="Active Settlements" value={formatNumber(world.social.activeSettlements)} />
+        <InspectorMetric label="Abandoned Settlements" value={formatNumber(world.social.abandonedSettlements)} />
+        <InspectorMetric label="Families" value={formatNumber(world.social.familyCount)} />
+        <InspectorMetric label="Lineages" value={formatNumber(world.social.lineageCount)} />
+        <InspectorMetric label="Recent Settlement Events" value={formatNumber(world.social.recentSettlementEvents)} />
         <InspectorMetric label="Plant Support Score" value={formatDecimal(world.planet.civilizationSupportScore, 3)} />
         <InspectorMetric label="Food Support Score" value={formatDecimal(world.planet.foodSupportScore, 3)} />
-        {sectionState("Civilization simulation remains a placeholder system in the current backend, so the dashboard exposes readiness signals but does not fabricate settlement or polity records.")}
+        {sectionState("Early settlement and family signals are sourced from persisted Atlas snapshots. Polities, institutions, and full civilization systems are still future work.")}
       </div>
     );
   }
@@ -924,7 +935,7 @@ export function WorldsDashboardClient({
           ? tickRates.reduce((total, value) => total + value, 0) / tickRates.length
           : 0,
       totalPopulation: worlds.reduce((total, world) => total + (world.health.humanPopulation ?? 0), 0),
-      totalCivilizations: 0,
+      totalSettlements: worlds.reduce((total, world) => total + (world.social.activeSettlements ?? 0), 0),
       totalAnimals: worlds.reduce((total, world) => total + (world.health.totalWildlifePopulation ?? 0), 0),
       totalPlants: worlds.reduce((total, world) => total + (world.planet.plantedCellCount ?? 0), 0),
     };
@@ -1055,7 +1066,7 @@ export function WorldsDashboardClient({
           <MetricCard detail="seed-aligned with canonical fingerprint" icon="canonical" label="Canonical Worlds" value={String(totals.canonicalWorlds)} />
           <MetricCard detail="average scheduler throughput" icon="tick" label="Average Tick Rate" value={`${totals.averageTickRate.toFixed(2)}/s`} />
           <MetricCard detail="human MVA populations only" icon="population" label="Total Population" value={formatCompactNumber(totals.totalPopulation)} />
-          <MetricCard detail="placeholder system, no generated records yet" icon="civilization" label="Total Civilizations" value={String(totals.totalCivilizations)} />
+          <MetricCard detail="active early settlements from Atlas snapshots" icon="civilization" label="Total Settlements" value={String(totals.totalSettlements)} />
           <MetricCard detail="wildlife counts across populated habitats" icon="animals" label="Total Animals" value={formatCompactNumber(totals.totalAnimals)} />
           <MetricCard detail="deterministically planted cells" icon="plants" label="Total Plants" value={formatCompactNumber(totals.totalPlants)} />
         </div>
@@ -1170,14 +1181,14 @@ export function WorldsDashboardClient({
                       <DetailPill label="Population" value={formatCompactNumber(world.health.humanPopulation)} />
                       <DetailPill label="Animals" value={formatCompactNumber(world.health.totalWildlifePopulation)} />
                       <DetailPill label="Plants" value={formatNumber(world.planet.plantedCellCount)} />
-                      <DetailPill label="Settlements" value="Untracked" />
+                      <DetailPill label="Settlements" value={formatNumber(world.social.activeSettlements)} />
                       <DetailPill label="Civilizations" value="0" />
                       <DetailPill label="Current Era" value={world.eraLabel} />
                       <DetailPill label="Planet Age" value={`Y${world.currentYear}`} />
                       <DetailPill label="Scheduler Status" value={world.simulation.running ? "Running" : world.simulation.canAdvance ? "Ready" : "Standby"} />
                       <DetailPill label="Weather Status" value={world.health.weatherSnapshotAvailable ? "Snapshot Available" : "Pending"} />
                       <DetailPill label="Simulation Status" value={world.health.lastTickStatus} />
-                      <DetailPill label="Memory Status" value="Untracked" />
+                      <DetailPill label="Families" value={formatNumber(world.social.familyCount)} />
                       <DetailPill label="Database Status" value="Connected" />
                     </div>
 

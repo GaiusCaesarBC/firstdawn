@@ -1,6 +1,7 @@
 
 import type { Prisma } from "@prisma/client";
 
+import { createHumanAppearance, normalizeHumanAppearances } from "./human-appearance";
 import { createNeutralRelationship } from "./human-relationships";
 import {
   HUMAN_ADULT_AGE_YEARS,
@@ -262,7 +263,7 @@ function sexForChild(worldId: string, tick: bigint, ordinal: number, parentIds: 
 function historyEntry(tick: bigint, type: string, summary: string, relatedHumanIds: readonly string[], settlementId: string | null): HumanFamilyHistoryEntry {
   return { tick: tick.toString(), type, summary, relatedHumanIds: unique(relatedHumanIds), settlementId };
 }
-function createChild(input: { worldId: string; tick: bigint; parents: readonly HumanAgent[]; agents: readonly HumanAgent[]; settlement: Settlement | null; familyId: string; lineageId: string }): HumanAgent {
+function createChild(input: { worldId: string; worldSeed: string; tick: bigint; parents: readonly HumanAgent[]; agents: readonly HumanAgent[]; settlement: Settlement | null; familyId: string; lineageId: string }): HumanAgent {
   const parentIds = input.parents.map((parent) => parent.id).sort();
   const mother = input.parents.find((parent) => parent.sex === "female") ?? input.parents[0];
   const father = input.parents.find((parent) => parent.sex === "male") ?? input.parents[1] ?? input.parents[0];
@@ -271,10 +272,18 @@ function createChild(input: { worldId: string; tick: bigint; parents: readonly H
   const settlementId = input.settlement?.id ?? null;
   const childId = `${input.worldId}:child:${input.lineageId.split(":").at(-1) ?? "lineage"}:${ordinal}`;
   const homeCellId = input.settlement?.homeCellId ?? mother.homeProfile?.primaryHomeCellId ?? mother.homeCellId;
+  const sex = sexForChild(input.worldId, input.tick, ordinal, parentIds);
   return {
     ...mother,
     id: childId,
-    sex: sexForChild(input.worldId, input.tick, ordinal, parentIds),
+    sex,
+    appearance: createHumanAppearance({
+      worldSeed: input.worldSeed,
+      humanId: childId,
+      birthTick: input.tick.toString(),
+      sex,
+      parentAppearances: input.parents.map((parent) => parent.appearance),
+    }),
     birthTick: input.tick.toString(),
     ageDays: 0,
     approxAgeYears: 0,
@@ -401,7 +410,7 @@ function inheritedKnowledge(child: HumanAgent, parent: HumanAgent, knowledge: Hu
     history: [{ tick: tick.toString(), event: "learned", summary: `Inherited early survival knowledge from ${parent.id}.`, confidence: clamp01(knowledge.confidence * 0.62), mastery: clamp01(knowledge.mastery * 0.28), sourceHumanId: parent.id, sourceEventId: eventId }],
   };
 }
-function chooseBirths(input: { worldId: string; tick: bigint; agents: readonly HumanAgent[]; relationships: readonly HumanRelationship[]; settlements: readonly Settlement[]; weights: FamilyGenerationsScoringWeights }) {
+function chooseBirths(input: { worldId: string; worldSeed: string; tick: bigint; agents: readonly HumanAgent[]; relationships: readonly HumanRelationship[]; settlements: readonly Settlement[]; weights: FamilyGenerationsScoringWeights }) {
   const adults = input.agents.filter(isAdultForBirth).sort((left, right) => left.id.localeCompare(right.id));
   const births: Array<{ parents: HumanAgent[]; child: HumanAgent; settlement: Settlement | null; familyId: string; lineageId: string; score: BirthScoringEntry }> = [];
   const scoring: BirthScoringEntry[] = [];
@@ -420,7 +429,7 @@ function chooseBirths(input: { worldId: string; tick: bigint; agents: readonly H
       const parentIds = parents.map((parent) => parent.id);
       const familyId = familyIdForParents(input.worldId, parentIds, settlement);
       const lineageId = lineageIdForParents(input.worldId, parents, familyId);
-      const child = createChild({ worldId: input.worldId, tick: input.tick, parents, agents: [...input.agents, ...births.map((birth) => birth.child)], settlement, familyId, lineageId });
+      const child = createChild({ worldId: input.worldId, worldSeed: input.worldSeed, tick: input.tick, parents, agents: [...input.agents, ...births.map((birth) => birth.child)], settlement, familyId, lineageId });
       births.push({ parents, child, settlement, familyId, lineageId, score });
       usedParents.add(first.id);
       usedParents.add(second.id);
@@ -544,12 +553,14 @@ export function familyEventToCausalEvent(event: FamilySystemEvent): HumanCausalE
   return { id: event.id, worldId: event.worldId, tick: event.tick, type: event.kind === "first birth" || event.kind === "settlement birth milestone" ? "Human Birth" : `Family ${event.title}`, title: event.title, summary: event.summary, agentIds: event.humanIds, cellId: event.cellId, causes: { familyId: event.familyId ?? "none", lineageId: event.lineageId ?? "none", settlementId: event.settlementId ?? "none", kind: event.kind }, effects: { importance: event.importance } as Record<string, Prisma.InputJsonValue>, memoryIds: [], chroniclerVisible: true, agentVisible: true };
 }
 
-export function getFamilyGenerationsStateFromHumanState(input: { worldId: string; tick: bigint; state: HumanMvaState; previousState?: HumanMvaState | null; settlements?: SettlementTickResult | null; weights?: FamilyGenerationsScoringWeights }): FamilyGenerationsResult {
+export function getFamilyGenerationsStateFromHumanState(input: { worldId: string; tick: bigint; state: HumanMvaState; previousState?: HumanMvaState | null; settlements?: SettlementTickResult | null; weights?: FamilyGenerationsScoringWeights; worldSeed?: string | null }): FamilyGenerationsResult {
   const weights = input.weights ?? DEFAULT_FAMILY_GENERATIONS_SCORING;
+  const worldSeed = input.worldSeed?.trim() || input.state.worldId || input.worldId;
   const settlements = input.settlements?.settlements ?? [];
-  const normalized: HumanMvaState = { ...input.state, tick: input.tick.toString(), agents: input.state.agents.map((agent) => normalizeAgent(agent, input.tick)) };
+  const appearanceNormalizedAgents = normalizeHumanAppearances(input.state.agents, worldSeed);
+  const normalized: HumanMvaState = { ...input.state, tick: input.tick.toString(), agents: appearanceNormalizedAgents.map((agent) => normalizeAgent(agent, input.tick)) };
   const protectedState = protectChildren(normalized);
-  const choices = chooseBirths({ worldId: input.worldId, tick: input.tick, agents: protectedState.agents, relationships: protectedState.relationships, settlements, weights });
+  const choices = chooseBirths({ worldId: input.worldId, worldSeed, tick: input.tick, agents: protectedState.agents, relationships: protectedState.relationships, settlements, weights });
   const birthApplied = applyBirths({ worldId: input.worldId, tick: input.tick, state: protectedState, births: choices.births });
   const deathApplied = applyDeaths(input.previousState ?? null, birthApplied.state, input.tick);
   const events = [...birthApplied.events, ...deathApplied.events].sort((left, right) => left.id.localeCompare(right.id));

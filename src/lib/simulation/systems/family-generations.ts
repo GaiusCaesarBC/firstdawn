@@ -1,3 +1,4 @@
+import { createChroniclerReport } from "../chronicler";
 import { HUMAN_TICK_RESULT_CACHE_KEY } from "../human-goals";
 import type { HumanTickResult } from "../human-types";
 import {
@@ -22,6 +23,51 @@ import type {
 const SYSTEM_NAME = FAMILY_GENERATIONS_SYSTEM_ID;
 const SYSTEM_LABEL = "Family & Generations Engine";
 const SYSTEM_ORDER = 127;
+
+function jsonSafe<T>(value: T) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function shouldPersistHumanCheckpoint(context: SimulationSystemContext, familyEventCount: number): boolean {
+  return Boolean(context.checkpoint) || context.tick % 100n === 0n || familyEventCount > 0;
+}
+
+function serializeHumanAgents(result: HumanTickResult) {
+  return result.state.agents.map((agent) => ({
+    id: agent.id,
+    sex: agent.sex,
+    approxAgeYears: agent.approxAgeYears,
+    isAlive: agent.isAlive,
+    currentCellId: agent.currentCellId,
+    previousCellId: agent.previousCellId,
+    destinationCellId: agent.destinationCellId,
+    movementIntent: agent.movementIntent,
+    movementReason: agent.movementReason,
+    lastMovedTick: agent.lastMovedTick,
+    recentPath: agent.recentPath,
+    stuckTicks: agent.stuckTicks,
+    distanceTraveled: agent.distanceTraveled,
+    explorationCount: agent.explorationCount,
+    generation: agent.generation,
+    motherId: agent.motherId,
+    fatherId: agent.fatherId,
+    biologicalParentIds: agent.biologicalParentIds,
+    guardianIds: agent.guardianIds,
+    childIds: agent.childIds,
+    siblingIds: agent.siblingIds,
+    mateId: agent.mateId,
+    familyId: agent.familyId,
+    lineageId: agent.lineageId,
+    ageStage: agent.ageStage,
+    birthplaceCellId: agent.birthplaceCellId,
+    birthplaceSettlementId: agent.birthplaceSettlementId,
+    inheritedHomeCellId: agent.inheritedHomeCellId,
+    inheritedSettlementId: agent.inheritedSettlementId,
+    ancestryTags: agent.ancestryTags,
+    needs: agent.needs,
+    lastDecision: agent.lastDecision,
+  }));
+}
 
 function cachedHumanResult(context: SimulationSystemContext): HumanTickResult {
   const cached = context.cache.get(HUMAN_TICK_RESULT_CACHE_KEY);
@@ -89,13 +135,25 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
     state: humanResult.state,
     previousState: null,
     settlements: settlementResult,
+    worldSeed: context.seed,
   });
 
+  const familyCausalEvents = result.events.map(familyEventToCausalEvent);
+  const promotedHumanResult: HumanTickResult = {
+    ...humanResult,
+    state: result.state,
+    newEvents: [...humanResult.newEvents, ...familyCausalEvents],
+    chroniclerReport: createChroniclerReport(result.state, [
+      ...humanResult.newEvents,
+      ...familyCausalEvents,
+    ]),
+  };
   const turboMode = context.fidelityMode === "turbo";
   const fastMode = context.fidelityMode === "fast";
   const emittedEvents = turboMode ? [] : fastMode ? result.events.slice(-2) : result.events;
 
   context.cache.set(FAMILY_GENERATIONS_TICK_RESULT_CACHE_KEY, result);
+  context.cache.set(HUMAN_TICK_RESULT_CACHE_KEY, promotedHumanResult);
   context.metrics.addEntities(result.state.agents.length + result.families.length + result.lineages.length);
 
   return {
@@ -127,6 +185,9 @@ export function run(context: SimulationSystemContext): SimulationSystemResult {
       lineages: result.lineages,
       settlementSummaries: result.settlementSummaries,
       birthScoring: result.scoring.slice(0, 12),
+      agents: serializeHumanAgents(promotedHumanResult),
+      relationships: promotedHumanResult.state.relationships,
+      chroniclerReport: promotedHumanResult.chroniclerReport,
       emittedFamilyEvents: emittedEvents.length,
       suppressedFamilyEvents: result.events.length - emittedEvents.length,
       forbiddenSystemsImplemented: [],
@@ -143,4 +204,54 @@ export const familyGenerationsSystem: SimulationSystem = {
   dependencies: ["settlements"],
   update: run,
   run,
+  async persist(context) {
+    const familyResult = context.cache.get(FAMILY_GENERATIONS_TICK_RESULT_CACHE_KEY);
+    const humanResult = context.cache.get(HUMAN_TICK_RESULT_CACHE_KEY);
+
+    if (
+      !familyResult ||
+      typeof familyResult !== "object" ||
+      !("events" in familyResult) ||
+      !humanResult ||
+      typeof humanResult !== "object" ||
+      !("state" in humanResult)
+    ) {
+      return;
+    }
+
+    const promotedHumanResult = humanResult as HumanTickResult;
+    const eventCount = Array.isArray(familyResult.events) ? familyResult.events.length : 0;
+    if (!shouldPersistHumanCheckpoint(context, eventCount)) {
+      return;
+    }
+
+    await context.client.simulationCheckpoint.upsert({
+      where: {
+        worldId_systemId_tick: {
+          worldId: context.world.id,
+          systemId: "humans",
+          tick: context.tick,
+        },
+      },
+      update: {
+        state: jsonSafe(promotedHumanResult.state),
+        metadata: jsonSafe({
+          sourceSystemId: SYSTEM_NAME,
+          promotedAfterFamilyGenerations: true,
+          familyEventCount: eventCount,
+        }),
+      },
+      create: {
+        worldId: context.world.id,
+        systemId: "humans",
+        tick: context.tick,
+        state: jsonSafe(promotedHumanResult.state),
+        metadata: jsonSafe({
+          sourceSystemId: SYSTEM_NAME,
+          promotedAfterFamilyGenerations: true,
+          familyEventCount: eventCount,
+        }),
+      },
+    });
+  },
 };

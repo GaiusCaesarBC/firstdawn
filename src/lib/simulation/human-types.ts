@@ -10,6 +10,123 @@ export type HumanSex = "male" | "female";
 
 export type HumanAgeStage = "Infant" | "Child" | "Adolescent" | "Adult" | "Elder";
 
+export type HumanSkinTone =
+  | "deep-brown"
+  | "brown"
+  | "medium-brown"
+  | "olive"
+  | "tan"
+  | "fair";
+
+export type HumanHairColor =
+  | "black"
+  | "dark-brown"
+  | "brown"
+  | "auburn"
+  | "sandy"
+  | "gray";
+
+export type HumanHairStyle =
+  | "short"
+  | "cropped"
+  | "shoulder"
+  | "long"
+  | "braided"
+  | "wrapped";
+
+export type HumanFacialHair =
+  | "none"
+  | "stubble"
+  | "short-beard"
+  | "full-beard";
+
+export type HumanBodyBuild =
+  | "slender"
+  | "average"
+  | "sturdy"
+  | "broad";
+
+export type HumanFaceShape =
+  | "oval"
+  | "round"
+  | "long"
+  | "square";
+
+export type HumanBodyHeight =
+  | "short"
+  | "average"
+  | "tall";
+
+export type HumanShoulderWidth =
+  | "narrow"
+  | "average"
+  | "wide";
+
+export type HumanClothingStyle =
+  | "simple-tunic"
+  | "woven-dress"
+  | "tunic-trousers"
+  | "wrapped-robe"
+  | "belted-wrap";
+
+export type HumanSleeveLength =
+  | "short"
+  | "elbow"
+  | "long";
+
+export type HumanTrouserStyle =
+  | "none"
+  | "straight"
+  | "wrapped"
+  | "loose";
+
+export type HumanFootwearStyle =
+  | "bare"
+  | "primitive-shoes"
+  | "leg-wraps";
+
+export type HumanPosture =
+  | "upright"
+  | "relaxed"
+  | "stooped";
+
+export type HumanClothingColor =
+  | "cream"
+  | "tan"
+  | "brown"
+  | "gray"
+  | "faded-green"
+  | "muted-blue";
+
+export type HumanEyeColor =
+  | "dark-brown"
+  | "brown"
+  | "hazel"
+  | "gray"
+  | "blue";
+
+export type HumanAppearance = {
+  version: 2;
+  seed: string;
+  skinTone: HumanSkinTone;
+  hairColor: HumanHairColor;
+  hairStyle: HumanHairStyle;
+  facialHair: HumanFacialHair;
+  faceShape: HumanFaceShape;
+  bodyBuild: HumanBodyBuild;
+  bodyHeight: HumanBodyHeight;
+  shoulderWidth: HumanShoulderWidth;
+  clothingStyle: HumanClothingStyle;
+  clothingColor: HumanClothingColor;
+  accentColor: HumanClothingColor;
+  sleeveLength: HumanSleeveLength;
+  trouserStyle: HumanTrouserStyle;
+  beltColor: HumanClothingColor;
+  footwearStyle: HumanFootwearStyle;
+  posture: HumanPosture;
+  eyeColor: HumanEyeColor;
+};
+
 export type HumanFamilyHistoryEntry = {
   tick: string;
   type: string;
@@ -167,51 +284,76 @@ export type HumanAgent = {
   id: string;
   worldId: string;
   sex: HumanSex;
+  appearance: HumanAppearance;
   isAlive: boolean;
   birthTick: string;
   ageDays: number;
   approxAgeYears: number;
+
   currentCellId: string;
   previousCellId: string | null;
   destinationCellId: string | null;
+
   movementIntent: HumanMovementIntent;
   movementReason: string;
   lastMovedTick: string | null;
+
   recentPath: string[];
   stuckTicks: number;
   distanceTraveled: number;
   explorationCount: number;
+
   homeCellId: string;
   homeProfile: HumanHomeProfile;
+
   motherId: string | null;
   fatherId: string | null;
   generation: number;
+
   biologicalParentIds: string[];
   guardianIds: string[];
   childIds: string[];
   siblingIds: string[];
+
   mateId: string | null;
   familyId: string | null;
   lineageId: string | null;
+
   ageStage: HumanAgeStage;
+
   birthplaceCellId: string;
   birthplaceSettlementId: string | null;
+
   inheritedHomeCellId: string | null;
   inheritedSettlementId: string | null;
+
   ancestryTags: string[];
   familyHistory: HumanFamilyHistoryEntry[];
+
   needs: HumanNeeds;
   emotions: HumanEmotionState;
+
+  reproductiveState?: {
+    lastReproductionTick: string | null;
+    fertility: number;
+    pregnancyProgress: number;
+    partnerId: string | null;
+  };
+
   curiosityProfile: HumanCuriosityProfile;
   motivations: HumanMotivations;
-  confidence: number; // grows with repeated safe success, reduces fear
-  familiarityByCell: Record<string, number>; // situational familiarity
-  safetyStreak: number; // consecutive safe ticks
+
+  confidence: number;
+  familiarityByCell: Record<string, number>;
+  safetyStreak: number;
+
   currentGoal: HumanGoal | null;
   goalHistory: HumanGoalHistoryEntry[];
+
   personality: HumanPersonality;
   beliefs: HumanBeliefDictionary;
   theoryOfMind: Record<string, HumanTheoryOfMindEstimate>;
+
   lastDecision: HumanDecision | null;
 };
 

@@ -98,6 +98,49 @@ describe("world health summary", () => {
     expect(health.averageClimateAdaptation).toBe(0.61);
   });
 
+  it("prefers post-family human metadata for dashboard population cards", () => {
+    const health = buildWorldHealthSummary(healthInput({
+      latestTick: {
+        tick: 3n,
+        success: true,
+        metadata: {
+          pipeline: [
+            {
+              name: "humans",
+              label: "Humans",
+              success: true,
+              metadata: {
+                agents: [
+                  { id: "founder-male", sex: "male", approxAgeYears: 22, isAlive: true },
+                  { id: "founder-female", sex: "female", approxAgeYears: 22, isAlive: true },
+                ],
+              },
+            },
+            {
+              name: "family-generations",
+              label: "Family & Generations Engine",
+              success: true,
+              metadata: {
+                agents: [
+                  { id: "founder-male", sex: "male", approxAgeYears: 22, isAlive: true },
+                  { id: "founder-female", sex: "female", approxAgeYears: 22, isAlive: true },
+                  { id: "child", sex: "female", approxAgeYears: 0, isAlive: true },
+                ],
+                relationships: [],
+              },
+            },
+          ],
+          failedSystems: [],
+        },
+      },
+    }));
+
+    expect(health.humanPopulation).toBe(3);
+    expect(health.childrenHumans).toBe(1);
+    expect(health.adultHumans).toBe(2);
+    expect(health.maleHumans).toBe(1);
+    expect(health.femaleHumans).toBe(2);
+  });
   it("warns when World.currentTick is stale versus the latest SimulationTick", () => {
     const health = buildWorldHealthSummary(healthInput({
       world: {

@@ -4,7 +4,7 @@
   "private": true,
   "description": "First Dawn: a long-term artificial civilization simulation and observer platform.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
@@ -18,7 +18,8 @@
     "world:verify-actions": "node scripts/verify-world-actions.js",
     "profile:snapshots": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/profile-snapshots.ts",
     "sim:worker": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/sim-worker.ts",
-    "sim:step": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/sim-worker.ts --once"
+    "sim:step": "node ./node_modules/jiti/lib/jiti-cli.mjs scripts/sim-worker.ts --once",
+    "dev:turbo": "next dev --turbopack"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

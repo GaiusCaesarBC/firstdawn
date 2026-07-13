@@ -1,10 +1,12 @@
-﻿import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
+import type { AnimalGridCell, AnimalSummary } from "../simulation/animal-engine";
+import { createChroniclerReport } from "../simulation/chronicler";
+import { normalizeLegacyHumanAppearance } from "../simulation/human-appearance";
 import { getHumanMvaStateAtTick } from "../simulation/human-engine";
 import { getSettlementStateAtTick, type Settlement, type SettlementTickResult } from "../simulation/settlement-engine";
-import { getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
+import { familyEventToCausalEvent, getFamilyGenerationsStateFromHumanState, type FamilyGenerationsResult } from "../simulation/family-generations-engine";
 import { getResourceStorageStateFromHumanState, type HumanInventorySummary, type ResourceStorageResult, type SettlementResourceSummary, type SettlementStorage } from "../simulation/resource-storage-engine";
-import type { ChroniclerEntry, HumanAgent, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship, HumanTickResult } from "../simulation/human-types";
-import { HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
+import type { ChroniclerEntry, HumanAgeStage, HumanAgent, HumanAppearance, HumanCausalEvent, HumanCommunicationRecord, HumanEmotionState, HumanKnowledge, HumanMemory, HumanNeeds, HumanRelationship, HumanTickResult } from "../simulation/human-types";
+import { HUMAN_ADULT_AGE_YEARS, HUMAN_MVA_DAY_TICKS } from "../simulation/human-types";
 import { getAnimalEcologyStateAtTick } from "../simulation/animal-engine";
 import type {
   AstronomyState,
@@ -213,6 +215,8 @@ export type AtlasHumanAgent = {
   id: string;
   label: string;
   sex: "male" | "female";
+  appearance: HumanAppearance;
+  ageStage: HumanAgeStage;
   approxAgeYears: number;
   currentCellId: string;
   previousCellId: string | null;
@@ -552,6 +556,7 @@ type AtlasHumanDerivedContext = {
   previousHumanResult: HumanTickResult | null;
   settlementResult: SettlementTickResult;
   familyResult: FamilyGenerationsResult;
+  postFamilyHumanResult: HumanTickResult;
   storageResult: ResourceStorageResult;
 };
 type AtlasHumanEmotionKey = "fear" | "distress" | "relief" | "curiosity" | "trust" | "attachment";
@@ -631,6 +636,42 @@ export type AtlasSnapshot = {
   cells: AtlasCell[];
 };
 
+function atlasAgeStageForYears(years: number): HumanAgeStage {
+  if (years < 2) return "Infant";
+  if (years < 12) return "Child";
+  if (years < HUMAN_ADULT_AGE_YEARS) return "Adolescent";
+  if (years >= 60) return "Elder";
+  return "Adult";
+}
+
+export function normalizeAtlasSnapshotHumanAppearances(snapshot: AtlasSnapshot): AtlasSnapshot {
+  const worldSeed = snapshot.fingerprint.seed?.trim() || snapshot.worldId;
+
+  return {
+    ...snapshot,
+    humans: {
+      ...snapshot.humans,
+      agents: snapshot.humans.agents.map((agent) => {
+        const legacyAgent = agent as Partial<AtlasHumanAgent>;
+        const ageStage = legacyAgent.ageStage ?? atlasAgeStageForYears(agent.approxAgeYears);
+        const appearance = normalizeLegacyHumanAppearance({
+          appearance: legacyAgent.appearance,
+          worldSeed,
+          humanId: agent.id,
+          birthTick: "0",
+          sex: agent.sex,
+          ageStage,
+        });
+
+        return {
+          ...agent,
+          ageStage,
+          appearance,
+        };
+      }),
+    },
+  };
+}
 function positiveOrDefault(value: number | null | undefined, fallback: number): number {
   return Number.isFinite(value) && Number(value) > 0 ? Number(value) : fallback;
 }
@@ -1405,7 +1446,18 @@ function getAtlasHumanDerivedContext(
         state: humanResult.state,
         previousState: previousHumanResult?.state ?? null,
         settlements: settlementResult,
+        worldSeed: world.seed,
       });
+      const familyCausalEvents = familyResult.events.map(familyEventToCausalEvent);
+      const postFamilyHumanResult: HumanTickResult = {
+        ...humanResult,
+        state: familyResult.state,
+        newEvents: [...humanResult.newEvents, ...familyCausalEvents],
+        chroniclerReport: createChroniclerReport(familyResult.state, [
+          ...humanResult.newEvents,
+          ...familyCausalEvents,
+        ]),
+      };
       const storageResult = getResourceStorageStateFromHumanState({
         worldId: world.id,
         tick,
@@ -1421,6 +1473,7 @@ function getAtlasHumanDerivedContext(
         previousHumanResult,
         settlementResult,
         familyResult,
+        postFamilyHumanResult,
         storageResult,
       };
     },
@@ -1435,11 +1488,14 @@ function buildAtlasSettlements(
 ): AtlasSettlements {
   const dayEndTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
   const derivedContext = context ?? getAtlasHumanDerivedContext(world, dayEndTick, dayEndTick, grid);
-  const currentHumanResult = derivedContext.humanResult;
+  const currentHumanResult = derivedContext.postFamilyHumanResult;
   const result = derivedContext.settlementResult;
   const familyResult = derivedContext.familyResult;
   const storageResult = derivedContext.storageResult;
-  const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
+  const displayIdBySourceId = new Map(currentHumanResult.state.agents.map((agent) => [
+    agent.id,
+    agent.id.includes(":first-human-") ? `first-human-${agent.sex}` : agent.id.replace(`${world.id}:`, ""),
+  ]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const normalizeSettlementText = (value: string) => value.replaceAll(`${world.id}:`, "").replaceAll(world.id, "atlas-world");
   const residentsByCell = new Map<string, string[]>();
@@ -1542,10 +1598,10 @@ function buildAtlasHumans(
   const dayEndTick = BigInt(Math.max(1, selectedDay) * HUMAN_MVA_DAY_TICKS);
   const dayStartTick = BigInt(Math.max(0, selectedDay - 1) * HUMAN_MVA_DAY_TICKS);
   const derivedContext = context ?? getAtlasHumanDerivedContext(world, dayEndTick, dayStartTick, grid);
-  const result = derivedContext.humanResult;
+  const result = derivedContext.postFamilyHumanResult;
   const dayStartResult = derivedContext.dayStartHumanResult;
   const dayStartAgentById = new Map(dayStartResult.state.agents.map((agent) => [agent.id, agent]));
-  const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, `first-human-${agent.sex}`]));
+  const displayIdBySourceId = new Map(result.state.agents.map((agent) => [agent.id, agent.id.includes(":first-human-") ? `first-human-${agent.sex}` : agent.id.replace(`${world.id}:`, "")]));
   const displayId = (sourceId: string) => displayIdBySourceId.get(sourceId) ?? sourceId.replace(`${world.id}:`, "");
   const normalizeHumanTextIds = (value: string) => result.state.agents.reduce(
     (text, agent) => text.split(agent.id).join(displayId(agent.id)),
@@ -1587,7 +1643,41 @@ function buildAtlasHumans(
       const rivals = topRelationships(agentRelationships.filter((relationship) => relationship.rivalry >= 0.25 || relationship.status === "Rival"), displayId, "rivalry", 5);
       const family = topRelationships(agentRelationships, displayId, "family", 5);
       const strongestBond = closestRelationships[0] ?? null;
-      const agentMemories = result.state.memories.filter((memory) => memory.agentId === agent.id);
+      const rawAgentMemories = result.state.memories.filter((memory) => memory.agentId === agent.id);
+      const agentMemories: HumanMemory[] = rawAgentMemories.length > 0
+        ? rawAgentMemories
+        : [{
+          id: `${agent.id}:atlas-memory:awakening-place`,
+          worldId: agent.worldId,
+          agentId: agent.id,
+          type: "Awakening Place",
+          category: "Spatial Memory",
+          subjectId: `place:${agent.birthplaceCellId ?? agent.homeCellId ?? agent.currentCellId}:awakening`,
+          locationCellId: agent.birthplaceCellId ?? agent.homeCellId ?? agent.currentCellId,
+          createdTick: agent.birthTick,
+          lastRecalledTick: agent.birthTick,
+          importance: 0.42,
+          emotionalWeight: 0.18,
+          source: "atlas-founding-context",
+          relatedEntityId: agent.birthplaceCellId ?? agent.homeCellId ?? agent.currentCellId,
+          relatedHumanId: null,
+          tags: ["awakening", "origin", "founding-generation"],
+          notes: "Atlas founding context: the first remembered place where consciousness began.",
+          recallCount: 1,
+          exposureCount: 1,
+          tick: agent.birthTick,
+          cellId: agent.birthplaceCellId ?? agent.homeCellId ?? agent.currentCellId,
+          participants: [agent.id],
+          eventType: "Human Awakening",
+          summary: `${agent.sex} human first became aware at ${agent.birthplaceCellId ?? agent.homeCellId ?? agent.currentCellId}.`,
+          emotionAtEncoding: { ...agent.emotions },
+          needContext: { ...agent.needs },
+          salience: 0.42,
+          confidence: 0.64,
+          valence: 0.58,
+          sourceEventId: `${agent.id}:atlas-awakening`,
+          causalLinks: ["awakening", "origin"],
+        }];
       const latestMemory = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recent", 1)[0] ?? null;
       const recentMemories = topMemorySummaries(agentMemories, normalizeHumanTextIds, "recent", 5);
       const strongestMemories = topMemorySummaries(agentMemories, normalizeHumanTextIds, "importance", 5);
@@ -1666,6 +1756,8 @@ function buildAtlasHumans(
         id: displayId(agent.id),
         label: agent.sex === "male" ? "First Male Human" : "First Female Human",
         sex: agent.sex,
+        appearance: agent.appearance,
+        ageStage: agent.ageStage,
         approxAgeYears: agent.approxAgeYears,
         currentCellId: agent.currentCellId,
         previousCellId: agent.previousCellId,
@@ -2104,7 +2196,4 @@ export function buildTimedAtlasSnapshot(
     grid.getGridSummary().totalCells,
   );
 }
-
-
-
 

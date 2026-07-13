@@ -377,6 +377,148 @@ async function persistCollectedEvents(
   });
 }
 
+type PublicBroadcastSystemResult = SimulationSystemResult & {
+  systemId: string;
+  systemName: string;
+  systemLabel: string;
+  systemVersion: number;
+  dependencies: string[];
+  metrics: SimulationSystemMetrics;
+  health: SimulationSystemHealth;
+};
+
+function isPublicRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function unwrapSystemMetadata(value: unknown): Record<string, unknown> | null {
+  if (!isPublicRecord(value)) {
+    return null;
+  }
+
+  return isPublicRecord(value.result) ? value.result : value;
+}
+
+function getSystemMetadata(
+  systemResults: readonly PublicBroadcastSystemResult[],
+  ids: readonly string[],
+): Record<string, unknown> | null {
+  const normalizedIds = new Set(ids.map((id) => id.toLowerCase()));
+
+  const result = systemResults.find(
+    (entry) =>
+      normalizedIds.has(entry.systemId.toLowerCase()) ||
+      normalizedIds.has(entry.systemName.toLowerCase()) ||
+      normalizedIds.has(entry.systemLabel.toLowerCase()),
+  );
+
+  return unwrapSystemMetadata(result?.metadata);
+}
+
+function findMetadataNumber(
+  systemResults: readonly PublicBroadcastSystemResult[],
+  keys: readonly string[],
+): number | null {
+  for (const result of systemResults) {
+    const metadata = unwrapSystemMetadata(result.metadata);
+    if (!metadata) continue;
+
+    for (const key of keys) {
+      const value = numberValue(metadata[key]);
+      if (value !== null) return value;
+    }
+  }
+
+  return null;
+}
+
+function jsonSafe<T>(value: T): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function buildPublicBroadcast(input: {
+  world: World;
+  tick: bigint;
+  success: boolean;
+  completedAt: Date;
+  durationMs: number;
+  collectedEvents: readonly CollectedSimulationEvent[];
+  persistEvents: boolean;
+  systemResults: readonly PublicBroadcastSystemResult[];
+}): Prisma.InputJsonValue {
+  const numericTick = Number(input.tick);
+  const yearLengthDays = Math.max(1, input.world.yearLengthDays || 365);
+  const simulationDay = Math.max(1, Math.floor(numericTick / 24) + 1);
+  const simulationYear = Math.floor((simulationDay - 1) / yearLengthDays);
+  const dayOfYear = ((simulationDay - 1) % yearLengthDays) + 1;
+
+  const humanMetadata = getSystemMetadata(input.systemResults, ["humans", "Human MVA", "Human MVA Foundation"]);
+  const agents = Array.isArray(humanMetadata?.agents) ? humanMetadata.agents.filter(isPublicRecord) : [];
+  const activeHumans =
+    numberValue(humanMetadata?.agentsAlive) ?? agents.filter((agent) => agent.isAlive !== false).length;
+  const activeSettlements =
+    findMetadataNumber(input.systemResults, ["activeSettlementCount", "activeCount", "settlementCount"]) ?? 0;
+
+  const visibleEvents = input.collectedEvents.filter((event) => {
+    const metadata = isPublicRecord(event.metadata) ? (event.metadata as Record<string, unknown>) : null;
+    return metadata?.chroniclerVisible === true || (event.historicalWeight ?? 0) >= 0.34;
+  });
+  const signalSource = visibleEvents.length > 0 ? visibleEvents : input.collectedEvents;
+
+  const latestSignals = signalSource.slice(-8).map((event) => {
+    const metadata = isPublicRecord(event.metadata) ? (event.metadata as Record<string, unknown>) : {};
+
+    return {
+      id: stringValue(metadata.eventId) ?? `${event.systemId}:${event.tick.toString()}:${event.title}`,
+      tick: event.tick.toString(),
+      category: event.type,
+      title: event.title,
+      summary: event.description ?? event.title,
+      systemId: event.systemId,
+      cellId: stringValue(metadata.cellId),
+      humanId:
+        stringValue(metadata.humanId) ??
+        stringValue(metadata.agentId) ??
+        (Array.isArray(metadata.agentIds) ? stringValue(metadata.agentIds[0]) : null) ??
+        (Array.isArray(metadata.humanIds) ? stringValue(metadata.humanIds[0]) : null),
+      settlementId: stringValue(metadata.settlementId),
+      historicalWeight: event.historicalWeight ?? 0,
+    };
+  });
+
+  return jsonSafe({
+    kind: "publicBroadcast",
+    version: 1,
+    generatedAt: input.completedAt.toISOString(),
+    worldId: input.world.id,
+    worldSlug: input.world.slug,
+    worldName: input.world.name,
+    environment: input.world.environment,
+    status: input.world.status,
+    success: input.success,
+    tick: input.tick.toString(),
+    simulationDay,
+    simulationYear,
+    dayOfYear,
+    yearLengthDays,
+    durationMs: input.durationMs,
+    activeHumans,
+    activeSettlements,
+    eventsEmitted: input.collectedEvents.length,
+    eventsPersisted: input.persistEvents ? input.collectedEvents.length : 0,
+    latestSignals,
+    failedSystems: input.systemResults.filter((result) => !result.success).map((result) => result.systemName),
+  });
+}
+
 export class SimulationScheduler {
   private static readonly defaultScheduler = new SimulationScheduler(DEFAULT_SIMULATION_SYSTEMS);
 
@@ -528,6 +670,7 @@ export class SimulationScheduler {
             logger: createSystemLogger(system),
             fidelityMode: plan.mode,
             fidelity: plan,
+            checkpoint: Boolean(options.checkpoint),
           };
           const beforeMemory = getHeapUsed();
           const systemStartedMs = Date.now();
@@ -669,6 +812,16 @@ console.log("[sim-profile] system run", {
                 checkpoint: Boolean(options.checkpoint),
                 eventsEmitted: collectedEvents.length,
                 eventsPersisted: persistEvents ? collectedEvents.length : 0,
+                publicBroadcast: buildPublicBroadcast({
+                  world,
+                  tick,
+                  success,
+                  completedAt,
+                  durationMs,
+                  collectedEvents,
+                  persistEvents,
+                  systemResults,
+                }),
                 profiling: {
                   totalDurationMs: durationMs,
                   totalCellsProcessed: systemResults.reduce((sum, result) => sum + result.metrics.cellsProcessed, 0),
@@ -1159,3 +1312,4 @@ export function getSimulationState(worldId: string): Promise<SimulationState> {
 
   return promise;
 }
+

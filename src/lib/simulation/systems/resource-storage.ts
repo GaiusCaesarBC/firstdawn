@@ -43,6 +43,7 @@ function cachedFamilyResult(context: SimulationSystemContext, humanResult: Human
     state: humanResult.state,
     previousState: previousHumanResult?.state ?? null,
     settlements: settlementResult,
+    worldSeed: context.seed,
   });
   context.cache.set(FAMILY_GENERATIONS_TICK_RESULT_CACHE_KEY, result);
   return result;

@@ -39,7 +39,7 @@ const coreSystems = [
   },
   {
     label: "Civilization",
-    detail: "Settlements, storage, culture, trade, institutions, and long histories are the next frontier.",
+    detail: "Early settlements, storage signals, families, and public histories exist; complex institutions remain future work.",
   },
 ];
 
@@ -50,7 +50,7 @@ const developmentStatus = [
   "atlas observatory",
   "living dossier",
   "event timeline",
-  "civilization systems coming next",
+  "persistent survival systems coming next",
 ];
 
 function PillLink({

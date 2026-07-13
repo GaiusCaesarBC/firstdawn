@@ -948,6 +948,7 @@ export function getResourceStorageStateAtTick(input: {
     state: humanResult.state,
     previousState: previousHumanResult?.state ?? null,
     settlements: settlementResult,
+    worldSeed: input.world.seed,
   });
   const previousStorage = input.tick > 0n
     ? getResourceStorageStateAtTick({ world: input.world, tick: input.tick - 1n, weights: input.weights })

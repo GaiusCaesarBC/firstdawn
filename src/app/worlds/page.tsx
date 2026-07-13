@@ -511,6 +511,13 @@ export default async function WorldsPage({ searchParams }: WorldsPageProps) {
         averageHumanRelationshipStability: toNullableNumber(health?.averageHumanRelationshipStability),
         humanSystemStatus: health?.humanSystemStatus ?? null,
       },
+      social: {
+        activeSettlements: persistedSnapshot?.social.activeSettlements ?? null,
+        abandonedSettlements: persistedSnapshot?.social.abandonedSettlements ?? null,
+        familyCount: persistedSnapshot?.social.familyCount ?? null,
+        lineageCount: persistedSnapshot?.social.lineageCount ?? null,
+        recentSettlementEvents: persistedSnapshot?.social.recentSettlementEvents ?? null,
+      },
       planet: {
         landPercent: toNullableNumber(persistedSnapshot?.terrainSummary.landPercent),
         oceanPercent: toNullableNumber(persistedSnapshot?.terrainSummary.oceanPercent),

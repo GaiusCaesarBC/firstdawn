@@ -12,6 +12,7 @@ import {
   useTransition,
 } from "react";
 
+import { buildHumanMapSpriteModel, buildHumanSpriteModel, HUMAN_SPRITE_NATIVE_HEIGHT, HUMAN_SPRITE_NATIVE_WIDTH } from "../../../lib/simulation/human-sprite";
 import type { AtlasCell, AtlasHumanAgent, AtlasSnapshot, AtlasWorldOption } from "../../../lib/worlds/map-atlas";
 import { PlanetGlobeRenderer } from "./planet-globe-renderer";
 
@@ -183,10 +184,20 @@ type AtlasSnapshotRequest = {
   key: string;
 };
 
+type AtlasSnapshotFetcher = (worldId: string, day?: number | null) => Promise<AtlasSnapshot>;
+
 type WorldMapAtlasClientProps = {
   worlds: AtlasWorldOption[];
+  initialSnapshot: AtlasSnapshot | null;
+  initialWorldId?: string | null;
+  initialDay?: number | null;
+  fetchSnapshot?: AtlasSnapshotFetcher;
+};
+
+type WorldMapAtlasLoadedClientProps = {
+  worlds: AtlasWorldOption[];
   initialSnapshot: AtlasSnapshot;
-  fetchSnapshot?: (worldId: string, day: number) => Promise<AtlasSnapshot>;
+  fetchSnapshot?: AtlasSnapshotFetcher;
 };
 
 const MAP_CELL_SIZE = 28;
@@ -1032,6 +1043,16 @@ function getWorldPixelSize(snapshot: AtlasSnapshot) {
     height: snapshot.grid.latitudeDivisions * MAP_CELL_SIZE,
   };
 }
+function estimateSnapshotSizeBytes(snapshot: AtlasSnapshot): number {
+  const cellBytes = snapshot.grid.totalCells * 5_700;
+  const humanBytes = snapshot.humans.agents.length * 28_000;
+  const settlementBytes = snapshot.settlements.settlements.length * 14_000;
+  const familyBytes = snapshot.families.families.length * 12_000;
+  const eventBytes = (snapshot.humans.chroniclerEntries.length + snapshot.humans.causalEvents.length + snapshot.settlements.recentEvents.length + snapshot.families.events.length) * 1_800;
+
+  return Math.max(0, Math.round(cellBytes + humanBytes + settlementBytes + familyBytes + eventBytes));
+}
+
 
 function createFitView(snapshot: AtlasSnapshot, width: number, height: number): AtlasView {
   const pixelSize = getWorldPixelSize(snapshot);
@@ -1131,6 +1152,68 @@ function drawArrow(context: CanvasRenderingContext2D, fromX: number, fromY: numb
   context.lineTo(toX - headLength * Math.cos(angle + Math.PI / 6), toY - headLength * Math.sin(angle + Math.PI / 6));
   context.closePath();
   context.fill();
+}
+
+function drawPixelHumanSprite(
+  context: CanvasRenderingContext2D,
+  agent: AtlasHumanAgent,
+  centerX: number,
+  centerY: number,
+  maxHeight: number,
+  active: boolean,
+  _animationClock: number,
+) {
+  const sprite = buildHumanMapSpriteModel(agent);
+  const scale = Math.max(1, Math.floor(maxHeight / sprite.height));
+  const renderedWidth = sprite.width * scale;
+  const renderedHeight = sprite.height * scale;
+  const left = Math.round(centerX - renderedWidth / 2);
+  const top = Math.round(centerY - renderedHeight / 2);
+
+  if ("imageSmoothingEnabled" in context) {
+    context.imageSmoothingEnabled = false;
+  }
+
+  for (const pixel of sprite.pixels) {
+    context.fillStyle = pixel.color;
+    context.fillRect(left + pixel.x * scale, top + pixel.y * scale, scale, scale);
+  }
+
+  if (active) {
+    context.strokeStyle = "rgba(103, 232, 249, 0.95)";
+    context.lineWidth = 1;
+    context.strokeRect(left - 1, top - 1, renderedWidth + 2, renderedHeight + 2);
+  }
+}
+
+function HumanSpriteAvatar({ human }: { human: AtlasHumanAgent }) {
+  const sprite = buildHumanSpriteModel(human);
+  const visiblePixels = sprite.pixels.filter((pixel) => pixel.color !== "rgba(3, 7, 12, 0.5)");
+
+  return (
+    <div className="flex h-[176px] w-[124px] shrink-0 items-center justify-center rounded-xl border border-amber-200/20 bg-[radial-gradient(circle_at_48%_18%,rgba(251,191,36,0.12),transparent_35%),rgba(255,255,255,0.04)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]">
+      <svg
+        data-testid="human-sprite-avatar"
+        className="h-[164px] w-[118px] drop-shadow-[0_10px_10px_rgba(0,0,0,0.35)] [image-rendering:crisp-edges] [image-rendering:pixelated]"
+        viewBox={`6 0 ${HUMAN_SPRITE_NATIVE_WIDTH - 12} ${HUMAN_SPRITE_NATIVE_HEIGHT}`}
+        role="img"
+        aria-label={`${human.label} pixel portrait`}
+        shapeRendering="crispEdges"
+      >
+        <ellipse cx="24" cy="69" rx="16" ry="2" fill="rgba(0,0,0,0.34)" />
+        {visiblePixels.map((pixel) => (
+          <rect
+            key={`${pixel.x}:${pixel.y}`}
+            x={pixel.x}
+            y={pixel.y}
+            width="1.05"
+            height="1.05"
+            fill={pixel.color}
+          />
+        ))}
+      </svg>
+    </div>
+  );
 }
 
 function getLayerStatistics(snapshot: AtlasSnapshot, layerId: LayerId): Array<{ label: string; value: string }> {
@@ -1295,8 +1378,13 @@ function getTooltipSummary(snapshot: AtlasSnapshot, cell: AtlasCell) {
   };
 }
 
-async function fetchAtlasSnapshotFromApi(worldId: string, day: number): Promise<AtlasSnapshot> {
-  const response = await fetch(`/api/worlds/map?world=${encodeURIComponent(worldId)}&day=${day}`, {
+async function fetchAtlasSnapshotFromApi(worldId: string, day?: number | null): Promise<AtlasSnapshot> {
+  const query = new URLSearchParams({ world: worldId });
+  if (typeof day === "number" && Number.isFinite(day)) {
+    query.set("day", String(day));
+  }
+
+  const response = await fetch(`/api/worlds/map?${query.toString()}`, {
     cache: "no-store",
   });
 
@@ -1592,9 +1680,7 @@ function ContextualInspector({ snapshot, cell, human }: { snapshot: AtlasSnapsho
       <section data-testid="cell-inspector" className="rounded-[1.5rem] border border-white/10 bg-white/[0.045] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl">
         <p className="text-[10px] uppercase tracking-[0.28em] text-amber-200/80">Living Dossier</p>
         <div className="mt-4 flex items-start gap-4">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-amber-200/20 bg-[radial-gradient(circle_at_35%_25%,rgba(251,191,36,0.35),transparent_42%),rgba(255,255,255,0.05)] text-2xl font-semibold text-amber-100">
-            {human.sex === "female" ? "F" : "M"}
-          </div>
+          <HumanSpriteAvatar human={human} />
           <div>
             <h3 className="font-display text-2xl text-white">{human.label}</h3>
             <p className="mt-1 text-sm text-stone-400">{human.id} / {getHumanLifeStage(human.approxAgeYears)} / age {formatNumber(human.approxAgeYears, 1)}</p>
@@ -1962,8 +2048,60 @@ function TimeTravelPanel({ snapshot, selectedCell, compareDay, compareSnapshot, 
 export function WorldMapAtlasClient({
   worlds,
   initialSnapshot,
+  initialWorldId = null,
+  initialDay = null,
   fetchSnapshot = fetchAtlasSnapshotFromApi,
 }: WorldMapAtlasClientProps) {
+  const [loadedSnapshot, setLoadedSnapshot] = useState<AtlasSnapshot | null>(initialSnapshot);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const selectedInitialWorldId = initialWorldId ?? initialSnapshot?.worldId ?? worlds[0]?.id ?? null;
+
+  useEffect(() => {
+    if (loadedSnapshot || !selectedInitialWorldId) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadError(null);
+
+    fetchSnapshot(selectedInitialWorldId, initialDay)
+      .then((snapshot) => {
+        if (!cancelled) {
+          setLoadedSnapshot(snapshot);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load atlas snapshot.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchSnapshot, initialDay, loadedSnapshot, selectedInitialWorldId]);
+
+  if (!loadedSnapshot) {
+    return (
+      <main className="min-h-screen bg-[#030508] px-6 py-16 text-stone-100">
+        <div className="mx-auto max-w-3xl rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)]">
+          <p className="text-[10px] uppercase tracking-[0.32em] text-dawn-gold">First Dawn Mission Control</p>
+          <h1 className="mt-3 font-display text-4xl text-white">Loading Atlas Snapshot</h1>
+          <p className="mt-3 text-sm leading-6 text-stone-300">Preparing the persisted world map.</p>
+          {loadError ? <p className="mt-4 rounded-xl border border-red-300/20 bg-red-500/10 p-3 text-sm text-red-100">{loadError}</p> : null}
+        </div>
+      </main>
+    );
+  }
+
+  return <WorldMapAtlasLoadedClient worlds={worlds} initialSnapshot={loadedSnapshot} fetchSnapshot={fetchSnapshot} />;
+}
+
+function WorldMapAtlasLoadedClient({
+  worlds,
+  initialSnapshot,
+  fetchSnapshot = fetchAtlasSnapshotFromApi,
+}: WorldMapAtlasLoadedClientProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [selectedLayerId, setSelectedLayerId] = useState<LayerId>("planet");
   const [activeLayerSectionId, setActiveLayerSectionId] = useState("planet");
@@ -1995,13 +2133,13 @@ export function WorldMapAtlasClient({
   const [lastSnapshotLoadMs, setLastSnapshotLoadMs] = useState(0);
   const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
   const [playbackLoopDelayMs, setPlaybackLoopDelayMs] = useState(0);
-  const [snapshotSizeBytes, setSnapshotSizeBytes] = useState<number | null>(() => process.env.NODE_ENV === "test" ? null : JSON.stringify(initialSnapshot).length);
+  const [snapshotSizeBytes, setSnapshotSizeBytes] = useState<number | null>(() => process.env.NODE_ENV === "test" ? null : estimateSnapshotSizeBytes(initialSnapshot));
   const [compareDay, setCompareDay] = useState(Math.max(1, initialSnapshot.selectedDay - 1));
   const [compareSnapshot, setCompareSnapshot] = useState<AtlasSnapshot | null>(null);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [chronicleMode, setChronicleMode] = useState(false);
   const [globeZoom, setGlobeZoom] = useState(1);
-  const [animationClock, setAnimationClock] = useState(0);
+  const animationClock = 0;
 
   const [searchHistory, setSearchHistory] = useState<Array<{ q: string; pinned?: boolean; at: number }>>(() => {
     if (typeof window === "undefined") return [];
@@ -2092,26 +2230,6 @@ const simulationBusy = snapshotRefreshing || isPending;
     lastSnapshotLoadMsRef.current = lastSnapshotLoadMs;
   }, [lastSnapshotLoadMs]);
 
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "test") {
-      return;
-    }
-
-    let animationFrame = 0;
-    let lastPublished = 0;
-    const tick = (time: number) => {
-      const publishEveryMs = timelinePlayingRef.current || snapshotRefreshingRef.current ? 180 : 80;
-      if (time - lastPublished > publishEveryMs) {
-        lastPublished = time;
-        setAnimationClock(time);
-      }
-      animationFrame = window.requestAnimationFrame(tick);
-    };
-
-    animationFrame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, []);
 
  useEffect(() => {
   cellByIdRef.current = cellById;
@@ -2367,29 +2485,14 @@ const simulationBusy = snapshotRefreshing || isPending;
   }, [snapshot.worldId, snapshot.tick, snapshotRefreshing, timelinePlaying]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === "test" || timelinePlaying || snapshotRefreshing) {
+    if (process.env.NODE_ENV === "test") {
       return;
     }
 
-    const measure = () => {
-      const startedAt = nowMs();
-      setSnapshotSizeBytes(JSON.stringify(snapshot).length);
-      logAtlasTiming("snapshot-size-measure", nowMs() - startedAt, { day: snapshot.selectedDay });
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-
-    if (idleWindow.requestIdleCallback && idleWindow.cancelIdleCallback) {
-      const handle = idleWindow.requestIdleCallback(measure, { timeout: 1200 });
-      return () => idleWindow.cancelIdleCallback?.(handle);
-    }
-
-    const timer = window.setTimeout(measure, 120);
-    return () => window.clearTimeout(timer);
-  }, [snapshot, snapshotRefreshing, timelinePlaying]);
+    const startedAt = nowMs();
+    setSnapshotSizeBytes(estimateSnapshotSizeBytes(snapshot));
+    logAtlasTiming("snapshot-size-estimate", nowMs() - startedAt, { day: snapshot.selectedDay });
+  }, [snapshot]);
 
   useEffect(() => {
     if (!timelinePlaying) {
@@ -2462,6 +2565,7 @@ const simulationBusy = snapshotRefreshing || isPending;
     const renderStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
     canvas.width = canvasSize.width;
     canvas.height = canvasSize.height;
+    context.imageSmoothingEnabled = false;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "#071017";
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -2706,9 +2810,6 @@ const simulationBusy = snapshotRefreshing || isPending;
     }
 
     if (isOverlayVisible("humans") || selectedLayerId === "civilizations") {
-      context.strokeStyle = "rgba(24, 24, 27, 0.9)";
-      context.lineWidth = 1;
-
       const humansByCell = new Map<string, number>();
       for (const agent of snapshot.humans.agents) {
         const index = humansByCell.get(agent.currentCellId) ?? 0;
@@ -2720,23 +2821,21 @@ const simulationBusy = snapshotRefreshing || isPending;
         }
 
         const rect = transform.cellRect(cell);
-        const size = Math.max(4, Math.min(rect.width, rect.height) * 0.2);
-        const x = rect.x + rect.width / 2 - size / 2 + (index - 0.5) * size * 1.3;
-        const y = rect.y + rect.height / 2 - size / 2;
+        const humansInCurrentCell = getHumansInCell(snapshot, agent.currentCellId).length;
+        const maxSpriteHeight = clamp(Math.min(rect.width, rect.height) * (humansInCurrentCell > 2 ? 0.52 : 0.68), 9, 24);
+        const spacing = Math.max(maxSpriteHeight * 0.55, rect.width * 0.16);
+        const groupOffset = index - (humansInCurrentCell - 1) / 2;
+        const centerX = rect.x + rect.width / 2 + groupOffset * spacing;
+        const centerY = rect.y + rect.height / 2 + Math.min(rect.height * 0.12, maxSpriteHeight * 0.18);
         const active = selectedHuman?.id === agent.id;
-        const pulse = 1 + Math.sin(animationClock * 0.008 + index) * 0.08;
-        context.fillStyle = active ? "rgba(103, 232, 249, 0.98)" : "rgba(253, 224, 71, 0.95)";
-        context.fillRect(x, y, size * pulse, size * pulse);
-        context.strokeRect(x, y, size * pulse, size * pulse);
+        drawPixelHumanSprite(context, agent, centerX, centerY, maxSpriteHeight, active, animationClock);
 
         if (active && typeof (context as any).arc === "function") {
           context.strokeStyle = "rgba(103, 232, 249, 0.9)";
           context.lineWidth = 2;
           context.beginPath();
-          context.arc(x + size / 2, y + size / 2, Math.max(9, size * 1.6), 0, Math.PI * 2);
+          context.arc(centerX, centerY, Math.max(9, maxSpriteHeight * 0.82), 0, Math.PI * 2);
           context.stroke();
-          context.strokeStyle = "rgba(24, 24, 27, 0.9)";
-          context.lineWidth = 1;
         }
       }
     }
@@ -2851,7 +2950,7 @@ const simulationBusy = snapshotRefreshing || isPending;
     const renderFinishedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
     const nextRenderCostMs = Math.max(0, renderFinishedAt - renderStartedAt);
     window.setTimeout(() => setRenderCostMs(nextRenderCostMs), 0);
-  }, [animationClock, autoOverlayMask, canvasSize.height, canvasSize.width, followHuman, hoveredCell, missionEvents, overlays, selectedCell, selectedHuman, selectedLayerId, signalToggles.families, snapshot, view]);
+  }, [autoOverlayMask, canvasSize.height, canvasSize.width, followHuman, hoveredCell, missionEvents, overlays, selectedCell, selectedHuman, selectedLayerId, signalToggles.families, snapshot, view]);
 
   // Build base layer buffer when snapshot or layer changes
   useEffect(() => {
@@ -3653,7 +3752,7 @@ const simulationBusy = snapshotRefreshing || isPending;
                   ref={canvasRef}
                   data-testid="world-map-canvas"
                   aria-label="Planetary simulation map"
-                  className="h-full w-full cursor-grab"
+                  className="h-full w-full cursor-grab [image-rendering:crisp-edges] [image-rendering:pixelated]"
                   onPointerDown={onCanvasPointerDown}
                   onPointerMove={onCanvasPointerMove}
                   onPointerUp={onCanvasPointerUp}

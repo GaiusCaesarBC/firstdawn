@@ -422,6 +422,37 @@ function candidate(input: {
   };
 }
 
+function isPluginRelevant(
+  pluginType: HumanGoalType,
+  context: ResolvedGoalDecisionContext
+): boolean {
+  const danger = context.environment.dangerScore;
+  const hunger = context.agent.needs.hunger;
+  const thirst = context.agent.needs.thirst;
+  const social = context.agent.needs.social;
+
+  switch (pluginType) {
+    case "Escape":
+    case "Seek Safety":
+    case "Defend Camp":
+      return danger > 0.4 || context.agent.emotions.fear > 0.4;
+
+    case "Find Food":
+      return hunger > 0.35;
+
+    case "Find Water":
+      return thirst > 0.35;
+
+    case "Socialize":
+    case "Stay Near Family":
+    case "Gather Near Camp":
+      return social > 0.3;
+
+    default:
+      return true;
+  }
+}
+
 export const HUMAN_GOAL_PLUGINS: readonly HumanGoalPlugin[] = Object.freeze([
   {
     type: "Defend Camp",
@@ -754,6 +785,10 @@ export function generateGoalCandidates(context: HumanGoalDecisionContext): Human
   const resolved = resolveContext(context);
 
   return sortCandidates(HUMAN_GOAL_PLUGINS.flatMap((plugin) => {
+    if (!isPluginRelevant(plugin.type, resolved)) {
+      return [];
+    }
+
     const candidate = plugin.createCandidate(resolved);
 
     return candidate ? [candidate] : [];

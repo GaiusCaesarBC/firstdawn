@@ -1,6 +1,7 @@
 import { createChroniclerReport } from "../chronicler";
 import { getLatestCheckpoint } from "../checkpoint-store";
 import { advanceHumanTick, spawnFirstTwoHumans } from "../human-engine";
+import { normalizeHumanAppearances } from "../human-appearance";
 import { HUMAN_TICK_RESULT_CACHE_KEY, isHumanGoalEvent } from "../human-goals";
 import {
   HUMAN_SYSTEM_ID,
@@ -102,6 +103,7 @@ async function getCheckpointedHumanResult(context: SimulationSystemContext): Pro
         : null;
 
   let state = compactHumanCheckpointState(selectedCheckpoint?.state ?? spawnFirstTwoHumans(context.world, 0n));
+  state = { ...state, agents: normalizeHumanAppearances(state.agents, seed) };
   const startTick = selectedCheckpoint ? selectedCheckpoint.tick + 1n : 1n;
 
   console.log("[humans-checkpoint]", {

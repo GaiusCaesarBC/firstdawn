@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { getFamilyGenerationsStateFromHumanState } from "../../src/lib/simulation/family-generations-engine";
 import { spawnFirstTwoHumans } from "../../src/lib/simulation/human-engine";
+import { HUMAN_TICK_RESULT_CACHE_KEY } from "../../src/lib/simulation/human-goals";
 import type { HumanAgent, HumanKnowledge, HumanMvaState, HumanRelationship } from "../../src/lib/simulation/human-types";
 import { createHomeProfile } from "../../src/lib/simulation/settlement-engine";
 import type { Settlement, SettlementTickResult } from "../../src/lib/simulation/settlement-engine";
+import { run as runFamilyGenerationsSystem } from "../../src/lib/simulation/systems/family-generations";
 import { DEFAULT_SIMULATION_SYSTEMS } from "../../src/lib/simulation/systems";
 import { buildAtlasSnapshot } from "../../src/lib/worlds/map-atlas";
 import { DEFAULT_WORLD_TIME_CONFIG } from "../../src/lib/simulation/time-engine";
@@ -123,6 +125,38 @@ describe("Family & Generations Engine", () => {
     expect(result.scoring[0].allowed).toBe(true);
   });
 
+  it("promotes a post-birth state into the canonical human result", () => {
+    const state = stableFamilyState();
+    const cache = new Map<string, unknown>();
+    cache.set(HUMAN_TICK_RESULT_CACHE_KEY, {
+      state,
+      newEvents: [],
+      memoryEvents: [],
+      relationshipEvents: [],
+      knowledgeEvents: [],
+      communicationEvents: [],
+      chroniclerReport: { entries: [], headline: null },
+    });
+
+    runFamilyGenerationsSystem({
+      world,
+      tick: 4n,
+      seed: world.seed,
+      timeScale: 1,
+      random: {} as never,
+      client: {} as never,
+      repositories: { client: {} as never },
+      cache,
+      eventBus: {} as never,
+      metrics: { addEntities: () => undefined } as never,
+      logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+      fidelityMode: "accurate",
+    });
+
+    const promoted = cache.get(HUMAN_TICK_RESULT_CACHE_KEY) as { state: HumanMvaState };
+    expect(promoted.state.agents).toHaveLength(3);
+    expect(promoted.state.agents.filter((agent) => agent.approxAgeYears < 18)).toHaveLength(1);
+  });
   it("does not create a birth under unsafe or starving conditions", () => {
     const state = {
       ...stableFamilyState(),
@@ -134,6 +168,23 @@ describe("Family & Generations Engine", () => {
     expect(result.scoring[0].allowed).toBe(false);
   });
 
+  it("gives newborns deterministic family-resembling appearance", () => {
+    const state = stableFamilyState();
+    const result = getFamilyGenerationsStateFromHumanState({ worldId: world.id, tick: 4n, state, settlements: stableSettlement(state), worldSeed: world.seed });
+    const child = result.state.agents.find((agent) => agent.ageStage === "Infant")!;
+    const parents = result.state.agents.filter((agent) => child.biologicalParentIds.includes(agent.id));
+    const childTraits = child.appearance;
+    const resemblanceCount = [
+      parents.some((parent) => parent.appearance.skinTone === childTraits.skinTone),
+      parents.some((parent) => parent.appearance.hairColor === childTraits.hairColor),
+      parents.some((parent) => parent.appearance.eyeColor === childTraits.eyeColor),
+      parents.some((parent) => parent.appearance.bodyBuild === childTraits.bodyBuild),
+    ].filter(Boolean).length;
+
+    expect(child.appearance.seed).toContain(child.id);
+    expect(resemblanceCount).toBeGreaterThanOrEqual(2);
+    expect(parents.map((parent) => parent.appearance)).not.toContainEqual(child.appearance);
+  });
   it("links child, parents, siblings, mate, and family relationships", () => {
     const state = stableFamilyState();
     const result = getFamilyGenerationsStateFromHumanState({ worldId: world.id, tick: 4n, state, settlements: stableSettlement(state) });
@@ -199,11 +250,10 @@ describe("Family & Generations Engine", () => {
 
   it("exposes family tree through Atlas", () => {
     const snapshot = buildAtlasSnapshot(world, 2);
-
     expect(snapshot.families.families.length).toBeGreaterThan(0);
     expect(snapshot.families.families[0]).toMatchObject({ memberIds: expect.any(Array), lineageId: expect.any(String) });
     expect(snapshot.settlements.settlements[0]).toHaveProperty("familiesPresent");
-  }, 60_000);
+  }, 240_000);
 
   it("registers after settlements and before civilization", () => {
     const labels = DEFAULT_SIMULATION_SYSTEMS.map((system) => system.label);

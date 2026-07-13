@@ -13,6 +13,7 @@ type PrismaClientLike = {
   world: Prisma.TransactionClient["world"];
   planet: Prisma.TransactionClient["planet"];
   planetCell: Prisma.TransactionClient["planetCell"];
+  simulationCheckpoint: Prisma.TransactionClient["simulationCheckpoint"];
   simulationTick: Prisma.TransactionClient["simulationTick"];
   worldActionLog: Prisma.TransactionClient["worldActionLog"];
   event: Prisma.TransactionClient["event"];
@@ -41,6 +42,7 @@ export type SimulationSystemContext = {
   logger: SimulationLogger;
   fidelityMode?: SimulationFidelityMode;
   fidelity?: SimulationFidelityPlan;
+  checkpoint?: boolean;
 };
 
 export type SimulationRepositories = {
@@ -131,3 +133,5 @@ export function systemSuccess(metadata?: Prisma.InputJsonValue): SimulationSyste
     metadata,
   };
 }
+
+

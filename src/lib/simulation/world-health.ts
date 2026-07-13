@@ -226,9 +226,13 @@ function getPersistedHumanMetrics(metadata: Prisma.JsonValue | null): Pick<
   | "averageHumanRelationshipStability"
   | "humanSystemStatus"
 > {
-  const humanEntry = getPipeline(metadata).find((entry) => entry.name === "humans" || entry.label === "Humans");
+  const pipeline = getPipeline(metadata);
+  const familyEntry = pipeline.find((entry) => entry.name === "family-generations");
+  const humanEntry = pipeline.find((entry) => entry.name === "humans" || entry.label === "Humans");
+  const familyMetadata = isRecord(familyEntry?.metadata) ? familyEntry.metadata : null;
   const entryMetadata = isRecord(humanEntry?.metadata) ? humanEntry.metadata : null;
-  const payload = entryMetadata && isRecord(entryMetadata.result) ? entryMetadata.result : entryMetadata;
+  const humanPayload = entryMetadata && isRecord(entryMetadata.result) ? entryMetadata.result : entryMetadata;
+  const payload = familyMetadata && Array.isArray(familyMetadata.agents) ? familyMetadata : humanPayload;
   const agents = Array.isArray(payload?.agents)
     ? payload.agents.filter((agent): agent is Record<string, unknown> => isRecord(agent))
     : [];
@@ -340,6 +344,7 @@ export function buildWorldHealthSummary(input: WorldHealthInput): WorldHealthSum
   const weatherSnapshotAvailable = input.latestTick ? hasWeatherSnapshot(input.latestTick.metadata) : false;
   const systemHealth = input.latestTick ? getSystemHealth(input.latestTick.metadata) : { status: null, diagnostics: [] };
   const occupiedAnimalHabitatPercent = roundPercent(input.animalCellCount, input.expectedCellCount);
+  const humanMetrics = getPersistedHumanMetrics(input.latestTick?.metadata ?? null);
   const badge = deriveBadge({
     currentTick,
     latestTick: latestSimulationTickNumber,
@@ -389,6 +394,18 @@ export function buildWorldHealthSummary(input: WorldHealthInput): WorldHealthSum
     systemHealthStatus: systemHealth.status,
     systemHealthDiagnostics: systemHealth.diagnostics,
     badge,
+    humanDataAvailable: humanMetrics.humanDataAvailable,
+    humanPopulation: humanMetrics.humanPopulation,
+    maleHumans: humanMetrics.maleHumans,
+    femaleHumans: humanMetrics.femaleHumans,
+    adultHumans: humanMetrics.adultHumans,
+    childrenHumans: humanMetrics.childrenHumans,
+    latestHumanAction: humanMetrics.latestHumanAction,
+    latestHumanCausalEvent: humanMetrics.latestHumanCausalEvent,
+    averageHumanFear: humanMetrics.averageHumanFear,
+    averageHumanCuriosity: humanMetrics.averageHumanCuriosity,
+    averageHumanRelationshipStability: humanMetrics.averageHumanRelationshipStability,
+    humanSystemStatus: humanMetrics.humanSystemStatus,
   };
 }
 

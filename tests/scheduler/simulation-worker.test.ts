@@ -10,6 +10,7 @@ import {
   getLatestPersistedAtlasSnapshot,
   persistAtlasSnapshotForTick,
 } from "../../src/lib/simulation/snapshot-store";
+import { getLatestPersistedLightweightAtlasSnapshot } from "../../src/lib/simulation/persisted-lightweight-atlas";
 import { prisma } from "../../src/lib/worlds/world-lifecycle";
 import {
   cleanupTestWorld,
@@ -105,6 +106,64 @@ describe("simulation worker", () => {
     expect(persisted?.tick).toBe("1");
     expect(persisted?.snapshot.worldId).toBe(world.id);
     expect(persisted?.snapshot.worldSlug).toBe(world.slug);
+  });
+
+  it("reads lightweight Atlas snapshots from persisted tick metadata", async () => {
+    const world = await track(createActiveSandboxTestWorld());
+    const timestamp = new Date();
+
+    await prisma.simulationTick.create({
+      data: {
+        worldId: world.id,
+        tick: 1n,
+        durationMs: 1,
+        success: true,
+        systemCount: 1,
+        failedSystemCount: 0,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        metadata: { source: "lightweight-snapshot-test" },
+      },
+    });
+
+    await persistAtlasSnapshotForTick(await loadWorldWithPlanet(world.id), 1n, {
+      selectedDay: 2,
+      buildSnapshot: () => ({
+        durationMs: 1,
+        value: {
+          worldId: world.id,
+          worldSlug: world.slug,
+          worldName: world.name,
+          selectedDay: 2,
+          tick: "1",
+          cells: [
+            {
+              id: "cell-1",
+              animalPopulations: [{ speciesId: "test-species" }],
+              movementVectors: [{ direction: "north" }],
+              ecosystemHistory: [{ tick: "1" }],
+              plantPopulations: [{ speciesId: "test-plant" }],
+              adaptationSignals: [{ kind: "heat" }],
+              resourceDeposits: [{ kind: "stone" }],
+              civilizationMarkers: [{ kind: "camp" }],
+            },
+          ],
+        } as never,
+      }),
+    });
+
+    const persisted = await getLatestPersistedLightweightAtlasSnapshot(world.id);
+    const cell = persisted?.snapshot.cells[0];
+
+    expect(persisted?.selectedDay).toBe(2);
+    expect(persisted?.snapshot.worldId).toBe(world.id);
+    expect(cell?.animalPopulations).toEqual([]);
+    expect(cell?.movementVectors).toEqual([]);
+    expect(cell?.ecosystemHistory).toEqual([]);
+    expect(cell?.plantPopulations).toEqual([]);
+    expect(cell?.adaptationSignals).toEqual([]);
+    expect(cell?.resourceDeposits).toEqual([]);
+    expect(cell?.civilizationMarkers).toEqual([]);
   });
 
   it("keeps worker-driven ticks deterministic for the same seed and system", async () => {
